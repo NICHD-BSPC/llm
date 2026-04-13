@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import shlex
 import shutil
 import subprocess
@@ -84,10 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
             "and --env to pass environment variables into the container."
         ),
     )
+
     parser.add_argument(
         "--backend",
         choices=("podman", "singularity"),
-        default="singularity",
+        default="podman" if platform.system() == "Darwin" else "singularity",
         help="Container backend to use (default: %(default)s)",
     )
     parser.add_argument(
@@ -103,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sif-path",
         default=str(Path(__file__).resolve().with_name("llm.sif")),
-        help="Singularity image path for the singularity backend (default: %(default)s)",
+        help="Singularity image path for the singularity backend. If relative path, it is interpreted as relative to this calling file (default: %(default)s)",
     )
     parser.add_argument(
         "--container-username",
