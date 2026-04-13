@@ -19,4 +19,4 @@ That is:
 
 So if you were to run `codex login` on Biowulf, it would print a URL to visit. If you pasted it into a local browser and logged in, the website would redirect to your local machine...but Codex would still be listening on Biowulf, and the redirect would never make it there.
 
-
+*Back to [README.md](../README.md)*

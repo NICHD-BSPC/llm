@@ -30,6 +30,8 @@ Singularity is a different way of handling containers. A Singularity container c
 
 ## Persistent mounts and config
 
+Files and directories on the host can be mounted into a container to selectively make them available inside the otherwise isolated container.
+
 The host home directory is not mounted. Even though Singularity mounts it by default, we disable with `--no-home`. This restricts the agents' access. 
 
 However, some tools need access to some sort of home directory inside the container. It is helpful to have that live in some separate place on the host. In this repo, the home directory of the container user (`devuser`) points to this location on the host: `~/.local/share/llm-devcontainer/home`. 
@@ -45,6 +47,28 @@ In addition, these host paths are mounted into the container as needed:
 
 These are handled and configured by the [`launch.py`](../launch.py) container launcher script.
 
+## Terminology
+
+Here we describe how the terms local, remote, host, and native are used in these docs.
+
+We distinguish between *local* and *remote* due to the idiosyncracies of logging in. See the [Login model section](container-notes.md#login-model) of the container notes page for why this is.
+
+- Local: the machine that you are logging in with a web browser. E.g., a Mac laptop
+- Remote: a machine that does not have a web browser. You need to log in locally and then transport credentials to the remote.
+
+When discussing containers, the *host* is the computer/operating system running Podman or Docker or Singularity.
+
+We use *native* to describe running an agent tool directly on the host, as opposed to running inside a container.
+
+
+| Machine    | Running                        | Native?       | Local? | Host  |
+|------------|--------------------------------|---------------|--------|-------|
+| Mac laptop | Codex in podman container      | containerized | local  | macOS |
+| Biowulf    | Codex in Singularity container | containerized | remote | Linux |
+| Mac laptop | Codex installed on macOS       | native        | local  | N/A   |
+| Biowulf    | Codex installed on Linux       | native        | remote | N/A   |
+
+
 ## Login model
 
 This section describes the details of how login works to help explain why we need the [`refresh.py`](../refresh.py) script.
@@ -58,3 +82,5 @@ It's a similar situation on a remote system: Codex is listening on the remote's 
 There are ways of port forwarding and tunneling that can work around this. But copying the file is straightforward and `refresh.py` makes it easy.
 
 This is also one of the methods suggested by the Codex docs (see [Fallback: Authenticate locally and copy your auth cache](https://developers.openai.com/codex/auth#fallback-authenticate-locally-and-copy-your-auth-cache)).
+
+*Back to [README.md](../README.md)*

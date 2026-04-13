@@ -40,3 +40,5 @@ The script prints `export AWS_BEARER_TOKEN_BEDROCK=....`, so the `eval` part wil
 > -H "Authorization: Bearer $AWS_BEARER_TOKEN_BEDROCK" \
 > -d '{"messages":[{"role":"user","content":[{"text":"Say hi"}]}]}' | jq .
 > ```
+
+*Back to [README.md](../README.md)*

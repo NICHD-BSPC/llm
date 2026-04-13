@@ -3,6 +3,8 @@
 This repo provides a set of documentation and tools for using LLMs in a secure
 manner at NIH on the command line -- including on Biowulf.
 
+It is a collection of markdown documentation and utility scripts.
+
 This repo is for *command-line interfaces*. If you're looking for web-based chat interfaces, see
 
 - [HHS Claude](https://go.hhs.gov/claudeai)
@@ -28,9 +30,15 @@ This repo is for *command-line interfaces*. If you're looking for web-based chat
   1. [Notes on containers](docs/container-notes.md) for introduction and context
   1. [Building containers](docs/building-containers.md) for building podman/docker/singularity containers. If you are primarily interested in doing this on Biowulf, only one person in your group needs to do this and push the image to a shared location.
   1. [Creating a conda environment](docs/conda-env.md) on your local machine to set up for using the container runners. This lets you use the [`refresh.py'](refresh.py) script for logging in as well as pushing credentials to a remote like Biowulf.
-  1.  [Running agents in containers](docs/running-containers.md) to use them in practice. Once everything is set up, this will be the main section of interest.
+  1. [Running agents in containers](docs/running-containers.md) to use them in practice. Once everything is set up, this will be the main section of interest.
+  1. [Tools](docs/tools.md) in this repo
+
+- **Configuration:**
+ - [Claude Code config](docs/claude-config.md)
+ - [Codex config](docs/codex-config.md)
+
 
 - **Other info:**
-  - Tool for inspecting conversations
+  - Comparisons
   - [Local vs remote](docs/local-remote.md), a note on nomenclature used here
   - [Bedrock API keys](docs/bedrock-keys.md) for when you can't use AWS SSO

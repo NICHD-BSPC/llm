@@ -115,3 +115,4 @@ Add `$REMOTE_PATH` to your PATH on the remote so you can call `launch.py` from a
 > [!note] Check
 > To test, run `refresh.py --remote helix.nih.gov` to refresh credentials locally and then push to Helix. Then, on Helix or an interactive node, run `launch.py codex`. Check directory mounting similar to the local check above
 
+*Back to [README.md](../README.md)*

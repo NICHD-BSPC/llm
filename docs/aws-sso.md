@@ -135,4 +135,9 @@ Importantly, *this only works on a local machine*. `aws sso login` is listening 
 
 To use these credentials on another host, you can manually transfer them or use the [`refresh.py`](../refresh.py) script.
 
-Claude Code can be configured to automatically run this any time the authentication times out, so you don't need to manually run `aws sso login` in that context.
+## Next steps
+
+Claude Code can be configured to automatically run this any time the authentication times out, so you don't need to manually run `aws sso login` in that context. See [Claude Code config](claude-config.md) for details.
+
+
+*Back to [README.md](../README.md)*
