@@ -478,6 +478,8 @@ def main(argv: list[str]) -> int:
                 "--env",
                 f"AWS_PROFILE={args.aws_profile}",
                 "--env",
+                "CLAUDE_CODE_NO_FLICKER=1",
+                "--env",
                 "DISABLE_AUTOUPDATER=1",
                 "--env",
                 "DISABLE_INSTALLATION_CHECKS=1",
