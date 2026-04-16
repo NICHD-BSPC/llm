@@ -1,0 +1,76 @@
+name: Podman Diagnostics
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Build container image
+        run: python3 build.py build
+
+      - name: Run shell diagnostics
+        run: script -q -e -c "bash tests/run-diagnostics.sh shell podman" /dev/null
+
+  singularity-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman rsync openssh-server apptainer
+          if ! command -v singularity >/dev/null 2>&1; then
+            sudo ln -s "$(command -v apptainer)" /usr/local/bin/singularity
+          fi
+
+      - name: Build Singularity image through localhost publish flow
+        run: |
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          ssh-keygen -t ed25519 -f "$HOME/.ssh/id_ed25519" -N ""
+          cat "$HOME/.ssh/id_ed25519.pub" >> "$HOME/.ssh/authorized_keys"
+          chmod 600 "$HOME/.ssh/authorized_keys"
+          ssh-keyscan -H localhost >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          eval "$(ssh-agent -s)"
+          ssh-add "$HOME/.ssh/id_ed25519"
+
+          sudo mkdir -p /run/sshd
+          sudo /usr/sbin/sshd
+
+          python3 build.py publish \
+            --remote-path /tmp/llm-ci \
+            --force \
+            localhost
+
+      - name: Verify Singularity artifact exists
+        run: ssh localhost test -f /tmp/llm-ci/llm.sif
