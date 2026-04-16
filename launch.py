@@ -143,7 +143,6 @@ class PodmanBackend(Backend):
             "--platform", args.arch,
             "--userns=keep-id",
             "--user", str(uid),
-            "--env", "HOME=/home/devuser",
             *env_args,
             *mount_args,
             "--workdir", args.workspace_mount or os.getcwd(),
@@ -311,6 +310,7 @@ class Launcher:
 
         # Base environment
         env = {
+            "HOME": "/home/devuser",
             "USER": "devuser",
             "LOGNAME": "devuser",
             "USERNAME": "devuser",

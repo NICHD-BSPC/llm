@@ -33,8 +33,8 @@ jobs:
 
       - name: Run shell diagnostics
         run: |
-          mkdir -p ~/.codex ~/.claude ~/.aws/sso
-          touch ~/.codex/auth.json ~/.claude/settings.json ~/.aws/config
+          mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache"
+          touch "$HOME/.codex/auth.json" "$HOME/.claude/settings.json" "$HOME/.claude.json" "$HOME/.aws/config"
 
           # the launch script uses -it when running the container, but this
           # test is not running in a TTY.
@@ -100,7 +100,7 @@ jobs:
 
       - name: Run shell diagnostics
         run: |
-          mkdir -p ~/.codex ~/.claude ~/.aws/sso
-          touch ~/.codex/auth.json ~/.claude/settings.json ~/.aws/config
+          mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache"
+          touch "$HOME/.codex/auth.json" "$HOME/.claude/settings.json" "$HOME/.claude.json" "$HOME/.aws/config"
           cp /tmp/llm-ci/llm.sif .
           script -q -e -c "bash tests/run-diagnostics.sh shell singularity" /dev/null
