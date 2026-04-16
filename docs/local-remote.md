@@ -1,8 +1,5 @@
 # Local and remote
 
-> [!IMPORTANT] Contents
-> [TOC]
-
 Here, we use the term **local** to refer to running directly on a laptop or desktop, and **remote** to refer to a host that may be living in a data center, like Biowulf.
 
 The distinction is important because the available login methods *need to run on a computer with a web browser that can redirect to localhost* which is typically only the case on a local machine.

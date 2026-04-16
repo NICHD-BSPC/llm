@@ -1,9 +1,5 @@
 # Notes on containers
 
-> [!IMPORTANT] Contents
-> [TOC]
-
-
 ## What's a container?
 
 A container is a lightweight, isolated collection of software. You build a *container image*, which includes things like an operating system and any software you want to install (here, it's Linux along with Codex and Claude Code and some supporting tools). Then you run the image, which creates a running container. You can run multiple containers from the same image. Each container is isolated from the rest of the system, unless you explicitly choose to allow it to interact with the host system.

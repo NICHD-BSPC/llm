@@ -1,8 +1,5 @@
 # Conda env
 
-> [!IMPORTANT] Contents
-> [TOC]
-
 Some tools in this repository have dependencies. The conda environment specification in this repo will provide those dependencies.
 
 Specifically, you'll need additional tools for the `inspect-conversation.py` script and using the `refresh.py` script for refreshing AWS credentials.
@@ -35,7 +32,7 @@ Or you can put the `bin` dir of the environment on your `PATH`. To identify that
 conda run -n llm echo $CONDA_PREFIX
 ```
 
-> [!NOTE] Check
+> [!TIP]
 > You are complete with this step when you can run `conda activate llm; python -c 'import boto3'` with no errors
 
 *Back to [README.md](../README.md)*
