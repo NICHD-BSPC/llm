@@ -514,7 +514,7 @@ def build_parser():
     )
     parser.add_argument(
         "--image-name",
-        default="llm-devcontainer",
+        default="localhost/llm-devcontainer:latest",
         help="Container image name for podman (default: %(default)s, needs to match name given to build.py)",
     )
     parser.add_argument(

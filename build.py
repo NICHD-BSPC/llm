@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent
-IMAGE_NAME = "llm-devcontainer"
+IMAGE_NAME = "localhost/llm-devcontainer:latest"
 ARCH = "linux/amd64"
 LOCAL_TAR_PATH = REPO_ROOT / "img.tar"
 CONTAINER_USERNAME = "devuser"
