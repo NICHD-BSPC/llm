@@ -102,4 +102,5 @@ jobs:
         run: |
           mkdir -p ~/.codex ~/.claude ~/.aws/sso
           touch ~/.codex/auth.json ~/.claude/settings.json ~/.aws/config
+          cp /tmp/llm-ci/llm.sif .
           script -q -e -c "bash tests/run-diagnostics.sh shell singularity" /dev/null
