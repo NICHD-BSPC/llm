@@ -1,6 +1,6 @@
 # Local and remote
 
-> [!important] Contents
+> [!IMPORTANT] Contents
 > [TOC]
 
 Here, we use the term **local** to refer to running directly on a laptop or desktop, and **remote** to refer to a host that may be living in a data center, like Biowulf.

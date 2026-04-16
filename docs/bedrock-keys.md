@@ -1,13 +1,13 @@
 # Amazon Bedrock keys
 
-> [!important] Contents
+> [!IMPORTANT] Contents
 > [TOC]
 
 Claude Code uses the AWS SDK, so `aws sso login` works. But not all tools use the AWS SDK. In such cases, you can get a short-term Bedrock token. You can use the examples at https://github.com/aws/aws-bedrock-token-generator-python, or you can use the `refresh.py` script which implements those examples.
 
 Note that this token expires in 12 hours or when the role session credentials of the creator expire – whichever is sooner. The SSO session itself lasts ~8 hrs (see [aws-sso](aws-sso.md)), but the underlying role session credentials for the default "AWSPowerUser" role expire every hour. Tools that use the AWS SDK refresh these automatically, but the Bedrock bearer token is fixed at creation time, so in practice it has a max lifetime of ~1 hr. The `refresh.py` script prints out the expiration time.
 
-> [!note]
+> [!NOTE]
 > Increasing the Bedrock token expiration would likely require AWS admin to change the timeout for AWSPowerUser role to longer than 1 hr.
 
 
@@ -30,7 +30,7 @@ eval "$(./refresh.py --bedrock-export)"
 
 The script prints `export AWS_BEARER_TOKEN_BEDROCK=....`, so the `eval` part will actually run that export in the current bash environment.
 
-> [!note] Check
+> [!NOTE] Check
 > You know it’s working when the following command gives a successful JSON output in response to the prompt, "say hi":
 > 
 > ```bash

@@ -1,6 +1,6 @@
 # Building containers for running agents
 
-> [!important] Contents
+> [!IMPORTANT] Contents
 > [TOC]
 
 
@@ -77,7 +77,7 @@ When running `build.py build`,
   which is usually fine because CPU is not the bottleneck. Change with `--arch`.
 - by default, cache is used. To force a fresh rebuild, use `--no-cache`.
 
-> [!note] Check
+> [!NOTE] Check
 > Test with `refresh.py` to refresh credentials, followed by `launch.py --backend podman codex`. This will start the container, mount the current directory to the same path inside the container, and immediately start codex. Use `!`-prefixed commands (like `! ls ~`) to call out to the shell to ensure no other directories are mounted.
 
 ### 2. Push to remote
@@ -112,7 +112,7 @@ This will:
 
 Add `$REMOTE_PATH` to your PATH on the remote so you can call `launch.py` from anywhere.
 
-> [!note] Check
+> [!NOTE] Check
 > To test, run `refresh.py --remote helix.nih.gov` to refresh credentials locally and then push to Helix. Then, on Helix or an interactive node, run `launch.py codex`. Check directory mounting similar to the local check above
 
 *Back to [README.md](../README.md)*

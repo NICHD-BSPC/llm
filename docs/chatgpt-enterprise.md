@@ -15,7 +15,7 @@ The current HHS ChatGPT Enterprise instance allows anyone to log in with NIH cre
 
 The file `~/.codex/auth.json` will be created with your credentials. **Treat this file like a password** since it allows Codex to authenticate as you. The [`refresh.py`](refresh.py) script can be used to do this in the future as well as push the credentials to a remote like Biowulf.
 
-> [!note] Check
+> [!NOTE] Check
 > You are complete with this step when you type `test` into Codex and the model sends a response.
 
 *Back to [README.md](../README.md)*

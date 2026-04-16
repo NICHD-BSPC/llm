@@ -11,7 +11,7 @@ This repo is for *command-line interfaces*. If you're looking for web-based chat
 - [HHS ChatGPT](https://go.hhs.gov/chatgpt)
 - [HHS Gemini](https://go.hhs.gov/gemini)
 
-> [!warning] Notice
+> [!WARNING] Notice
 > ***Everything here assumes you are familiar with [NIH AI guidance](http://www.nihlibrary.nih.gov/resources/subject-guides/generative-ai-nih/policies-guidelines).*** This includes, but is not limited to:
 > - No PII
 > - No pre-decisional information
