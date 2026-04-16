@@ -1,5 +1,8 @@
 name: Podman Diagnostics
 
+env:
+  APPTAINER_VERSION: "1.3.6"
+
 on:
   push:
     branches:
@@ -29,7 +32,17 @@ jobs:
         run: python3 build.py build
 
       - name: Run shell diagnostics
-        run: script -q -e -c "bash tests/run-diagnostics.sh shell podman" /dev/null
+        run: |
+          mkdir -p ~/.codex ~/.claude ~/.aws/sso
+          touch ~/.codex/auth.json ~/.claude/settings.json ~/.aws/config
+
+          # the launch script uses -it when running the container, but this
+          # test is not running in a TTY.
+          # -q omits start/stop messages; -e return exit code so we fail
+          # workflow if needed; -c don't start shell. Taken together (plus
+          # logging to /dev/null) means essentially: "run the command in a fake
+          # terminal"
+          script -q -e -c "bash tests/run-diagnostics.sh shell podman" /dev/null
 
   singularity-build:
     runs-on: ubuntu-latest
@@ -38,6 +51,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Pyhon required for running the launch and build scripts
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -46,10 +60,18 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman rsync openssh-server apptainer
-          if ! command -v singularity >/dev/null 2>&1; then
-            sudo ln -s "$(command -v apptainer)" /usr/local/bin/singularity
-          fi
+          sudo apt-get install -y curl podman rsync openssh-server
+
+          curl -fsSL \
+            -o /tmp/apptainer.deb \
+            "https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/apptainer_${APPTAINER_VERSION}_amd64.deb"
+          sudo apt-get install -y /tmp/apptainer.deb
+          sudo ln -sf "$(command -v apptainer)" /usr/local/bin/singularity
+
+      - name: Verify Apptainer install
+        run: |
+          apptainer --version
+          singularity --version
 
       - name: Build Singularity image through localhost publish flow
         run: |
