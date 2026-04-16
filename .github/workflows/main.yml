@@ -36,6 +36,12 @@ jobs:
           mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache"
           touch "$HOME/.codex/auth.json" "$HOME/.claude/settings.json" "$HOME/.claude.json" "$HOME/.aws/config"
 
+          echo "HOME=$HOME"
+          id
+          ls -ld "$HOME/.codex" "$HOME/.claude" "$HOME/.aws" || true
+          ls -l "$HOME/.claude.json" || true
+          python3 launch.py --verbose --dry-run --backend podman shell tests/container-diagnostics.sh
+
           # the launch script uses -it when running the container, but this
           # test is not running in a TTY.
           # -q omits start/stop messages; -e return exit code so we fail
