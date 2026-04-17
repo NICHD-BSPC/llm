@@ -137,13 +137,23 @@ class PodmanBackend(Backend):
         env_args = self.build_env_args(env_vars)
         mount_args = self.build_mount_args(mounts)
 
+        # On CI platforms like GitHub Actions, podman runs rootless on a Linux
+        # host, so we don't have Podman Desktop to intercept and gracefully
+        # handle permssion issues.
+        if os.getenv("CI") == "true":
+            userns_arg = "--userns=keep-id:uid=1000,gid=1000"
+            user_arg = "--user=1000:1000"
+
+        else:
+            userns_arg = "--userns=keep-id"
+            user_arg = f"--user={uid}"
+
         # fmt: off
         return [
             self.command, "run", "--rm", "-it",
             "--platform", args.arch,
-            #
-            "--userns=keep-id",
-            # "--user", str(uid),
+            userns_arg,
+            user_arg,
             *env_args,
             *mount_args,
             "--workdir", args.workspace_mount or os.getcwd(),
