@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
 """
 Launches an LLM dev container via podman or singularity.
+
+Overview of the flow:
+    - user command (e.g., claude)
+    - parse args to select subcommand config
+      - e.g., config for claude has credential files, env vars, aws requirements
+    - build container environment
+      - e.g., PATH, env vars, mounts
+      - argparse object is used to pass along info
+    - choose backend (podman / singularity)
+      - Backend-specific classes handle details
+    - launch container in backend
 """
 
-from __future__ import annotations
 
 import argparse
 import os
@@ -15,494 +25,637 @@ import sys
 from pathlib import Path
 
 
+# Hard-coded credential and config paths.
 CREDENTIAL_PATHS = {
+    "codex": ("~/.codex",),  # ~/.codex/auth.json has credentials
+    "claude": (
+        "~/.claude",
+        "~/.claude.json",
+        "~/.aws",
+    ),  # ~/.aws/sso and ~/.aws/config have credentials
+}
+
+# Unique config for each subcommand
+SUBCOMMAND_CONFIG = {
+    "shell": {
+        "command": ["/bin/bash"],
+        "credentials": ["codex", "claude"],
+        "extra_env": {
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            "DISABLE_AUTOUPDATER": "1",
+            "DISABLE_INSTALLATION_CHECKS": "1",
+        },
+        "include_aws_env": True,
+    },
     "codex": {
-        "auth": ("~/.codex/auth.json",),
-        "config": ("~/.codex/config.toml",),
-        "full": ("~/.codex",),
+        "command": ["codex", "--sandbox", "danger-full-access"],
+        "credentials": ["codex"],
+        "extra_env": {},
+        "include_aws_env": False,
     },
     "claude": {
-        "auth": ("~/.aws/config", "~/.aws/sso/cache"),
-        "config": ("~/.claude/settings.json", "~/.claude.json"),
-        "full": ("~/.claude", "~/.aws"),
+        "command": ["claude"],
+        "credentials": ["claude"],
+        "extra_env": {
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            "CLAUDE_CODE_NO_FLICKER": "1",
+            "DISABLE_AUTOUPDATER": "1",
+            "DISABLE_INSTALLATION_CHECKS": "1",
+        },
+        "include_aws_env": True,
+        "require_aws_profile": True,
     },
 }
 
 
-def ensure_mount_target(path: Path, is_dir: bool) -> None:
-    """Create a mount target on the host when it is expected to exist."""
-    if is_dir:
-        path.mkdir(parents=True, exist_ok=True)
-        return
+class Backend:
+    """Base class for container backends.
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.touch(exist_ok=True)
-
-
-def setup_host_paths(container_home_host_dir, container_local_host_dir) -> None:
+    Subclasses should set:
+    - command: str (e.g., "podman", "singularity")
+    - mount_flag: str (e.g., "--volume", "--bind")
     """
-    Makes sure that directories and files mounted into the container exist.
-    """
-    # Claude Code wants at least a symlink to itself in ~/.local/bin.
-    (Path(container_local_host_dir) / "bin").mkdir(parents=True, exist_ok=True)
 
-    # Persistent container home.
-    container_home = Path(container_home_host_dir)
-    container_home.mkdir(parents=True, exist_ok=True)
+    command = ""
+    mount_flag = ""
 
-    # Mount targets used by the tool-specific configs and auth-only mode.
-    seen = set()
-    for credential_paths in CREDENTIAL_PATHS.values():
-        for path in (
-            *credential_paths["auth"],
-            *credential_paths["config"],
-            *credential_paths["full"],
-        ):
-            if path in seen:
+    def __init__(self, args):
+        self.args = args
+
+    def build_env_args(self, env_vars):
+        env_args = []
+        for key, value in env_vars.items():
+            env_args.extend(["--env", f"{key}={value}"])
+        return env_args
+
+    def build_mount_args(self, mounts):
+        mount_args = []
+        for host_path, container_path in mounts:
+            mount_args.extend([self.mount_flag, f"{host_path}:{container_path}"])
+        return mount_args
+
+    def check_availability(self):
+        if shutil.which(self.command) is None:
+            print(f"Error: missing command '{self.command}' in PATH.", file=sys.stderr)
+            sys.exit(1)
+
+    def validate_image(self):
+        """Validate that the container image exists. Override in subclasses."""
+        pass
+
+    def build_command(self, env_vars, mounts, command_args):
+        raise NotImplementedError
+
+
+class PodmanBackend(Backend):
+    """Podman backend implementation."""
+
+    command = "podman"
+    mount_flag = "--volume"
+
+    def validate_image(self):
+        """Check that the podman image exists."""
+        result = subprocess.run(
+            [self.command, "image", "exists", self.args.image_name],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            print(
+                f"Error: podman image '{self.args.image_name}' not found.",
+                file=sys.stderr,
+            )
+            print(
+                "Build it first or specify a different image with --image-name.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    def build_command(self, env_vars, mounts, command_args):
+        args = self.args
+        uid = os.getuid()
+
+        env_args = self.build_env_args(env_vars)
+        mount_args = self.build_mount_args(mounts)
+
+        # On CI platforms like GitHub Actions, podman runs rootless on a Linux
+        # host, so we don't have Podman Desktop to intercept and gracefully
+        # handle permssion issues.
+        if os.getenv("CI") == "true":
+            userns_arg = "--userns=keep-id:uid=1000,gid=1000"
+            user_arg = "--user=1000:1000"
+
+        else:
+            userns_arg = "--userns=keep-id"
+            user_arg = f"--user={uid}"
+
+        # fmt: off
+        return [
+            self.command, "run", "--rm", "-it",
+            "--platform", args.arch,
+            userns_arg,
+            user_arg,
+            *env_args,
+            *mount_args,
+            "--workdir", args.workspace_mount or os.getcwd(),
+            args.image_name,
+            *command_args,
+        ]
+        # fmt: on
+
+
+class SingularityBackend(Backend):
+    """Singularity backend implementation."""
+
+    command = "singularity"
+    mount_flag = "--bind"
+
+    def validate_image(self):
+        """Check that the singularity .sif file exists."""
+        sif_path = Path(self.args.sif_path)
+        if not sif_path.exists():
+            print(
+                f"Error: singularity image '{self.args.sif_path}' not found.",
+                file=sys.stderr,
+            )
+            print(
+                "Build it first or specify a different path with --sif-path.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not sif_path.is_file():
+            print(
+                f"Error: singularity image '{self.args.sif_path}' is not a file.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    def build_command(self, env_vars, mounts, command_args):
+        args = self.args
+
+        env_vars = dict(env_vars)
+        home_dir = env_vars.pop("HOME", None)
+        env_args = self.build_env_args(env_vars)
+        mount_args = self.build_mount_args(mounts)
+        home_arg = []
+
+        if home_dir:
+            host_home = str(Path(args.container_local_host_dir).expanduser().parent)
+            home_arg = ["--home", f"{host_home}:{home_dir}"]
+
+        # fmt: off
+        return [
+            self.command, "exec",
+            *home_arg,
+            *env_args,
+            *mount_args,
+            "--pwd", args.workspace_mount or os.getcwd(),
+            args.sif_path,
+            *command_args,
+        ]
+        # fmt: on
+
+
+class Launcher:
+    """Main orchestrator for container launches."""
+
+    def __init__(self, args):
+        self.args = args
+        self._validate_args()
+
+        # Decide which backend subclass to use
+        if args.backend == "podman":
+            self.backend = PodmanBackend(args)
+        elif args.backend == "singularity":
+            self.backend = SingularityBackend(args)
+        else:
+            raise ValueError(f"Unknown backend: {args.backend}")
+
+    def _validate_args(self):
+        """Validate command-line arguments."""
+
+        args = self.args  # for convenience in this method...
+
+        # a relative --workspace-mount doesn't make sense (what would it be relative to?)
+        if args.workspace_mount and not Path(args.workspace_mount).is_absolute():
+            print(
+                f"Error: --workspace-mount must be an absolute path, got: {args.workspace_mount}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # If mounting a conda env, needs to exist and have a bin dir
+        if args.conda_env:
+            conda_path = Path(args.conda_env).expanduser().resolve()
+            if (
+                not conda_path.exists()
+                or not conda_path.is_dir()
+                or not (conda_bin / "bin").is_dir()
+            ):
+                print(
+                    f"Error: --conda-env path needs to be a directory containing a bin/ directory. Got: {args.conda_env}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            args.conda_env = str(conda_path)
+
+    def setup_host_paths(self):
+        """Create necessary host directories before launch."""
+        local_dir = Path(self.args.container_local_host_dir).expanduser()
+        local_dir.mkdir(parents=True, exist_ok=True)
+        (local_dir / "bin").mkdir(parents=True, exist_ok=True)
+
+    def _is_path_inside_workspace(self, path, host_cwd):
+        """Check if a path is inside the workspace directory."""
+        path_str = str(path)
+        return path_str.startswith(host_cwd + "/") or path_str == host_cwd
+
+    def _resolve_conda_path_in_container(
+        self, conda_path, host_cwd, container_workspace
+    ):
+        """
+        Resolve conda environment path for use in container PATH.
+
+        Returns the path to conda's bin directory as it should appear
+        inside the container
+        """
+        # Determine if conda env is inside or outside the workspace
+        if self._is_path_inside_workspace(conda_path, host_cwd):
+            # Inside workspace - use relative path
+            rel = os.path.relpath(conda_path, host_cwd)
+            return f"{container_workspace}/{rel}/bin"
+        else:
+            # Outside workspace - use absolute path
+            return f"{conda_path}/bin"
+
+    def build_path(self):
+        """
+        Construct the container PATH environment variable based on command-line
+        args like --env and --path-prepend.
+
+        Precedence (highest to lowest):
+        1. conda env bin
+        2. path-prepend
+        3. base PATH
+        """
+        args = self.args
+        host_cwd = os.getcwd()
+        container_workspace = args.workspace_mount or host_cwd
+
+        path = (
+            # This initial path comes from running a bare ubuntu container and
+            # inspecting its default PATH
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:"
+            # Claude Code will complain if this is not in the path
+            "/home/devuser/.local/bin"
+        )
+
+        # Add path-prepend if specified
+        if args.path_prepend:
+            path = f"{container_workspace}/{args.path_prepend}:{path}"
+
+        # Add conda env if specified (takes highest precedence)
+        if args.conda_env:
+            conda_path = Path(args.conda_env)
+            conda_bin = self._resolve_conda_path_in_container(
+                conda_path, host_cwd, container_workspace
+            )
+            path = f"{conda_bin}:{path}"
+
+        return path
+
+    def build_env_vars(self, subcommand_config):
+        """Build all environment variables for the container."""
+        args = self.args
+
+        # Base environment
+        env = {
+            "HOME": "/home/devuser",
+            "USER": "devuser",
+            "LOGNAME": "devuser",
+            "USERNAME": "devuser",
+            "TOOL": args.cmd,
+            "HOST_MOUNT_DIR": os.getcwd(),
+            "PATH": self.build_path(),
+        }
+
+        # Add subcommand-specific env
+        env.update(subcommand_config["extra_env"])
+
+        # Add AWS env if needed
+        if subcommand_config.get("include_aws_env"):
+            env["AWS_REGION"] = args.aws_region
+            env["AWS_PROFILE"] = args.aws_profile or ""
+
+        # Add user-provided env vars (these come last)
+        for env_var in args.env:
+            if "=" not in env_var:
+                print(
+                    f"Error: invalid environment variable format '{env_var}'. "
+                    f"Expected KEY=VALUE.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            key, value = env_var.split("=", 1)
+            env[key] = value
+
+        return env
+
+    def build_mounts(self, subcommand_config):
+        """Build all mounts for the container."""
+        args = self.args
+        host_cwd = os.getcwd()
+        container_workspace = args.workspace_mount or host_cwd
+
+        # Configure mounts as (host_path, container_path) tuples
+        mounts = [
+            # Container's .local directory
+            (
+                str(Path(args.container_local_host_dir).expanduser()),
+                "/home/devuser/.local",
+            ),
+            # Workspace
+            (host_cwd, container_workspace),
+        ]
+
+        # Add user-provided mounts
+        for mount_spec in args.mount:
+            host_path, container_path = self._parse_mount_spec(mount_spec)
+            mounts.append((host_path, container_path))
+
+        # Add conda env mount if needed (and outside workspace)
+        if args.conda_env:
+            conda_path = args.conda_env
+            if not self._is_path_inside_workspace(conda_path, host_cwd):
+                mounts.append((conda_path, conda_path))
+
+        # Add credential mounts
+        for tool in subcommand_config["credentials"]:
+            mounts.extend(self._credential_mounts(tool))
+
+        return self._normalize_mounts(mounts)
+
+    def _normalize_mounts(self, mounts):
+        """Deduplicate identical mounts and reject conflicting container paths."""
+        seen_mounts = set()
+        container_targets = {}
+        normalized = []
+
+        for host_path, container_path in mounts:
+            mount_key = (host_path, container_path)
+            if mount_key in seen_mounts:
                 continue
-            seen.add(path)
-            expanded = Path(path).expanduser()
-            if expanded.exists():
-                is_dir = expanded.is_dir()
-            elif path in credential_paths["auth"] or path in credential_paths["config"]:
-                # Auth/config mounts can be individual files even without an
-                # extension, such as ~/.aws/config.
-                is_dir = False
-            elif path in credential_paths["full"]:
-                is_dir = True
-            else:
-                is_dir = not expanded.suffix
-            ensure_mount_target(expanded, is_dir=is_dir)
+
+            existing_host_path = container_targets.get(container_path)
+            if existing_host_path is not None and existing_host_path != host_path:
+                print(
+                    "Error: conflicting mounts for container path "
+                    f"'{container_path}': '{existing_host_path}' and '{host_path}'.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+            seen_mounts.add(mount_key)
+            container_targets[container_path] = host_path
+            normalized.append((host_path, container_path))
+
+        return normalized
+
+    def _credential_mounts(self, tool):
+        """
+        Returns list of (host_path, container_path) tuples for the given tool.
+
+        Only returns paths that actually exist on the host.
+        """
+        mounts = []
+        paths = CREDENTIAL_PATHS[tool]
+
+        for path_str in paths:
+            if not path_str.startswith("~/"):
+                raise ValueError(f"Expected home-relative path, got: {path_str}")
+
+            # Expand ~ to actual home directory
+            host_path = Path(path_str).expanduser()
+            path_under_home = Path(path_str[2:])  # Remove "~/"
+
+            # Map to container home
+            container_path = f"/home/devuser/{path_under_home}"
+
+            # Only mount if it exists
+            if host_path.exists():
+                mounts.append((str(host_path), container_path))
+                if self.args.verbose:
+                    print(f"Mounting credential: {path_str}", file=sys.stderr)
+            elif self.args.verbose:
+                print(f"Skipping missing credential: {path_str}", file=sys.stderr)
+
+        return mounts
+
+    def _parse_mount_spec(self, spec):
+        """Parse mount spec: 'HOST' or 'HOST:CONTAINER'."""
+        if not spec or spec == ":":
+            print(f"Error: invalid mount specification '{spec}'.", file=sys.stderr)
+            sys.exit(1)
+
+        if ":" not in spec:
+            # Single path: resolve it and use for both host and container
+            resolved = str(Path(spec).resolve())
+            host = container = resolved
+        else:
+            host, container = spec.split(":", 1)
+            if not host or not container:
+                print(
+                    f"Error: invalid mount specification '{spec}'. "
+                    f"Both host and container paths must be non-empty.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            # Resolve only host path to absolute (can't resolve container path
+            # unless inside container)
+            host = str(Path(host).resolve())
+
+        return host, container
+
+    def run(self):
+        """Main entry point for launching a container."""
+        args = self.args
+
+        self.setup_host_paths()
+        if not args.dry_run:
+            self.backend.check_availability()
+            self.backend.validate_image()
+
+        # Config for this subcommand (claude, codex, shell)
+        subcommand_config = SUBCOMMAND_CONFIG[args.cmd]
+
+        if subcommand_config.get("require_aws_profile"):
+            if not args.aws_profile:
+                print(
+                    f"Error: --aws-profile is required for {args.cmd}.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+        env_vars = self.build_env_vars(subcommand_config)
+        mounts = self.build_mounts(subcommand_config)
+
+        # Build command args (subcommand command + any tool args from command line)
+        # Special handling for shell: if args provided, use -c to execute them
+        if args.cmd == "shell" and args.tool_args:
+            command_args = ["/bin/bash", "-c", " ".join(args.tool_args)]
+        else:
+            command_args = subcommand_config["command"] + args.tool_args
+
+        # Build and execute command
+        cmd = self.backend.build_command(env_vars, mounts, command_args)
+
+        if args.dry_run:
+            print(shlex.join(cmd))
+        else:
+            subprocess.run(cmd, check=True)
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser():
+    """Build the argument parser."""
+
     parser = argparse.ArgumentParser(
         description=(
             "Launch an LLM dev container via podman or singularity. "
-            "Mounts the current working directory into the same absolute path "
-            "inside the container by default; use --mount to include additional "
-            "directories, --conda-env to mount environments (and add them to the PATH), "
-            "and --env to pass environment variables into the container."
+            "Mounts the current working directory into the container."
         ),
     )
 
+    # Backend options
     parser.add_argument(
         "--backend",
         choices=("podman", "singularity"),
         default="podman" if platform.system() == "Darwin" else "singularity",
-        help="Container backend to use (default: %(default)s)",
+        help="Container backend to use (default macOS is podman; otherwise singularity)",
     )
     parser.add_argument(
         "--image-name",
-        default="llm-devcontainer",
-        help="Container image name for the podman backend (default: %(default)s)",
+        default="localhost/llm-devcontainer:latest",
+        help="Container image name for podman (default: %(default)s, needs to match name given to build.py)",
     )
     parser.add_argument(
         "--arch",
         default="linux/amd64",
-        help="Container platform for the podman backend (default: %(default)s)",
+        help="Container platform for podman (default: %(default)s, needs to match arch given to build.py)",
     )
     parser.add_argument(
         "--sif-path",
         default=str(Path(__file__).resolve().with_name("llm.sif")),
-        help="Singularity image path for the singularity backend. If relative path, it is interpreted as relative to this calling file (default: %(default)s)",
+        help="Singularity image path. Relative paths resolved relative to this script (default: %(default)s)",
     )
-    parser.add_argument(
-        "--container-username",
-        default="devuser",
-        help="Username inside the container (default: %(default)s). "
-        "Needs to match Dockerfile expectations.",
-    )
-    parser.add_argument(
-        "--container-home",
-        default="/home/devuser",
-        help="Home directory inside the container (default: %(default)s). "
-        "Needs to match Dockerfile expectations.",
-    )
-    parser.add_argument(
-        "--container-home-host-dir",
-        default=str(Path.home() / ".local/share/llm-devcontainer/home"),
-        help="Host directory mounted as the container home (default: %(default)s).",
-    )
+
     parser.add_argument(
         "--container-local-host-dir",
         default=str(Path.home() / ".local/share/llm-devcontainer/home/.local"),
-        help="Host directory used for the container's ~/.local data (default: %(default)s)",
+        help="Host directory mounted as container's ~/.local (default: %(default)s)",
     )
+
+    # Workspace
     parser.add_argument(
         "--workspace-mount",
-        help=(
-            "Workspace path inside the container "
-            "(default: host current working directory)"
-        ),
+        help="Override workspace path inside the container (default: same as host cwd)",
     )
+
+    # AWS configuration
     parser.add_argument(
         "--aws-region",
         default=os.environ.get("AWS_REGION", "us-east-1"),
-        help="AWS region passed into Claude-enabled containers (default: %(default)s)",
+        help="AWS region for Claude (default: %(default)s)",
     )
     parser.add_argument(
         "--aws-profile",
         default=os.environ.get("AWS_PROFILE"),
-        help="AWS profile passed into Claude-enabled containers (default: %(default)s)",
+        help="AWS profile for Claude (default: %(default)s)",
     )
 
+    # Path configuration
     parser.add_argument(
         "--path-prepend",
-        help="Path, relative to current working directory, to prepend to the container's $PATH",
+        help="Path relative to workspace to prepend to container PATH",
     )
-
     parser.add_argument(
         "--conda-env",
-        help=(
-            "Path to a conda environment on the host. Its bin/ directory is prepended "
-            "to the container's $PATH. If the path is outside the current working "
-            "directory, it is automatically bind-mounted into the container."
-        ),
+        help="Path to conda environment. Its bin/ is prepended to PATH",
     )
+
+    # Mounts and environment
     parser.add_argument(
         "--env",
         action="append",
         default=[],
         metavar="KEY=VALUE",
-        help=(
-            "Environment variable to pass into the container. "
-            "Can be specified multiple times."
-        ),
+        help="Environment variable to pass into container (repeatable)",
     )
-
     parser.add_argument(
         "--mount",
         action="append",
         default=[],
-        help=(
-            "Additional directory to bind-mount into the container. "
-            "Format: HOST_PATH or HOST_PATH:CONTAINER_PATH "
-            "(if CONTAINER_PATH is omitted, the host path is used). "
-            "Can be specified multiple times."
-        ),
+        help="Additional mount: HOST_PATH or HOST_PATH:CONTAINER_PATH (repeatable)",
     )
-    parser.add_argument(
-        "--isolated",
-        action="store_true",
-        help=(
-            "Mount only the auth files needed by the selected tool instead of "
-            "the full tool config directories."
-        ),
-    )
+
+    # Execution mode
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the container command without executing it",
     )
-
-    subparsers = parser.add_subparsers(dest="cmd", required=True)
-    subparsers.add_parser("shell", help="Launch an interactive shell").set_defaults(
-        tool_args=[]
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show verbose output including credential mount status",
     )
 
-    for command, help_text in (
-        ("codex", "Run codex in the container"),
-        ("claude", "Run claude in the container (requires --aws-profile)"),
-    ):
-        subparsers.add_parser(command, help=help_text).set_defaults(tool_args=[])
+    # Subcommands
+    subparsers = parser.add_subparsers(dest="cmd", required=True)
+
+    subparsers.add_parser(
+        "shell",
+        help="Launch an interactive bash shell",
+    )
+
+    subparsers.add_parser(
+        "codex",
+        help="Run codex in the container",
+    )
+
+    subparsers.add_parser(
+        "claude",
+        help="Run claude in the container (requires --aws-profile)",
+    )
 
     return parser
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
+def parse_args(argv):
+    """Parse command-line arguments."""
     parser = build_parser()
     args, remainder = parser.parse_known_args(argv)
 
-    if args.cmd == "shell" and remainder:
-        parser.error(f"unrecognized arguments: {' '.join(remainder)}")
-
+    # All subcommands forward extra arguments
     args.tool_args = remainder
 
+    # Resolve --sif-path relative to this script if it's a relative path
+    sif_path = Path(args.sif_path)
+    if not sif_path.is_absolute():
+        script_dir = Path(__file__).resolve().parent
+        args.sif_path = str(script_dir / sif_path)
+
     return args
 
 
-def warn_if_backend_unavailable(command):
-    if shutil.which(command) is None:
-        print(
-            f"Error: missing command '{command}' in PATH.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-
-def parse_mount(spec: str) -> tuple[str, str]:
-    """Parse a mount spec 'host_path' or 'host_path:container_path'."""
-    if ":" in spec:
-        host, container = spec.split(":", 1)
-    else:
-        host = container = spec
-    host = str(Path(host).resolve())
-    return host, container
-
-
-def build_mount_args(
-    backend_mount_flag: str,
-    mounts: list[tuple[Path, str]],
-) -> list[str]:
-    args: list[str] = []
-    for host_path, container_path in mounts:
-        args.extend([backend_mount_flag, f"{host_path}:{container_path}"])
-    return args
-
-
-def build_env_args(env_vars: list[str]) -> list[str]:
-    args: list[str] = []
-    for env_var in env_vars:
-        args.extend(["--env", env_var])
-    return args
-
-
-def host_and_container_path(path: str, container_home: str) -> tuple[Path, str]:
-    if not path.startswith("~/"):
-        raise ValueError(f"Expected home-relative path, got: {path}")
-    suffix = path[2:]
-    return Path(path).expanduser(), f"{container_home}/{suffix}"
-
-
-def build_container_command(
-    backend,
-    arch,
-    runtime_target,
-    tool,
-    extra_run_args,
-    cmd_args,
-    container_username,
-    container_home,
-    container_home_host_dir,
-    workspace_mount,
-    path_prepend,
-    extra_mounts=(),
-    env_path=None,
-    user_env_vars=(),
-) -> list[str]:
-
-    pwd = os.getcwd()
-    container_workspace = workspace_mount or pwd
-    uid = os.getuid()
-    gid = os.getgid()
-    PATH = (
-        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:"
-        f"{container_home}/.local/bin"
-    )
-    if path_prepend is not None:
-        PATH = f"{container_workspace}/{path_prepend}:{PATH}"
-
-    if env_path is not None:
-        env_resolved = str(Path(env_path).resolve())
-        if env_resolved.startswith(pwd + "/") or env_resolved == pwd:
-            # Inside the working directory, so it will already be mounted. Use
-            # container-relative path (in case the workspace dir was overridden
-            # in the command line args)
-            rel = os.path.relpath(env_resolved, pwd)
-            env_bin = f"{container_workspace}/{rel}/bin"
-        else:
-            # Outside the working directory — needs its own mount
-            extra_mounts = list(extra_mounts) + [(env_resolved, env_resolved)]
-            env_bin = f"{env_resolved}/bin"
-        PATH = f"{env_bin}:{PATH}"
-
-    # Formatting note: we want arg name and values on the same line, so disable
-    # formatting temporarily fmt: off
-    env_args = [
-        "--env",
-        f"USER={container_username}",
-        "--env",
-        f"LOGNAME={container_username}",
-        "--env",
-        f"USERNAME={container_username}",
-        "--env",
-        f"TOOL={tool}",
-        "--env",
-        f"HOST_MOUNT_DIR={pwd}",
-        "--env",
-        f"PATH={PATH}",
-        *build_env_args(list(user_env_vars)),
-    ]
-    # fmt: on
-
-    mount_flag = "--volume" if backend == "podman" else "--bind"
-    extra_mount_args = []
-    for host_path, container_path in extra_mounts:
-        extra_mount_args += [mount_flag, f"{host_path}:{container_path}"]
-
-    if backend == "podman":
-        # fmt: off
-        run_args = [
-            "podman", "run", "--rm", "-it", "--platform",
-            arch,
-            "--user", f"{uid}:{gid}",
-            f"--userns=keep-id:uid={uid},gid={gid}",
-            "--env", f"HOME={container_home}",
-            *env_args,
-            *extra_run_args,
-            "--volume", f"{container_home_host_dir}:{container_home}",  # fmt: skip
-            "--volume", f"{pwd}:{container_workspace}",
-            *extra_mount_args,
-            "--workdir", container_workspace,
-            runtime_target,
-            *cmd_args,
-        ]
-        # fmt: on
-
-    else:
-        # fmt: off
-        run_args = [
-            "singularity", "exec",
-            *env_args,
-            *extra_run_args,
-            "--no-home",
-            "--home", f"{container_home_host_dir}:{container_home}",
-            "--bind", f"{pwd}:{container_workspace}",
-            *extra_mount_args,
-            "--pwd", container_workspace,
-            runtime_target,
-            *cmd_args,
-        ]
-        # fmt: on
-
-    return run_args
-
-
-def run_container(*args, dry_run: bool = False, **kwargs) -> None:
-    run_args = build_container_command(*args, **kwargs)
-    if dry_run:
-        print(shlex.join(run_args))
-        return
-    subprocess.run(run_args, check=True)
-
-
-def main(argv: list[str]) -> int:
+def main(argv):
+    """Main entry point."""
     args = parse_args(argv)
-    setup_host_paths(args.container_home_host_dir, args.container_local_host_dir)
-    backend = args.backend
-    if not args.dry_run:
-        warn_if_backend_unavailable(backend)
-    cmd = args.cmd
-    tool_args = getattr(args, "tool_args", [])
-    backend_lookup = {
-        "podman": ("--volume", args.image_name),
-        "singularity": ("--bind", args.sif_path),
-    }
-    backend_mount_flag, runtime_target = backend_lookup[backend]
-    extra_mounts = [parse_mount(m) for m in args.mount]
-    mount_mode = "auth" if args.isolated else "full"
-    codex_mounts = build_mount_args(
-        backend_mount_flag,
-        [
-            host_and_container_path(path, args.container_home)
-            for path in CREDENTIAL_PATHS["codex"][mount_mode]
-        ],
-    )
-    claude_mounts = build_mount_args(
-        backend_mount_flag,
-        [
-            host_and_container_path(path, args.container_home)
-            for path in CREDENTIAL_PATHS["claude"][mount_mode]
-        ],
-    )
-
-    if cmd == "shell":
-        run_container(
-            backend,
-            args.arch,
-            runtime_target,
-            "shell",
-            [
-                "--env",
-                "CLAUDE_CODE_USE_BEDROCK=1",
-                "--env",
-                f"AWS_REGION={args.aws_region}",
-                "--env",
-                f"AWS_PROFILE={args.aws_profile or ''}",
-                "--env",
-                "DISABLE_AUTOUPDATER=1",
-                "--env",
-                "DISABLE_INSTALLATION_CHECKS=1",
-                *codex_mounts,
-                *claude_mounts,
-            ],
-            ["/bin/bash"],
-            args.container_username,
-            args.container_home,
-            args.container_home_host_dir,
-            args.workspace_mount,
-            args.path_prepend,
-            extra_mounts,
-            env_path=args.conda_env,
-            user_env_vars=args.env,
-            dry_run=args.dry_run,
-        )
-        return 0
-
-    if cmd == "codex":
-        run_container(
-            backend,
-            args.arch,
-            runtime_target,
-            "codex",
-            codex_mounts,
-            ["codex", "--sandbox", "danger-full-access", *tool_args],
-            args.container_username,
-            args.container_home,
-            args.container_home_host_dir,
-            args.workspace_mount,
-            args.path_prepend,
-            extra_mounts,
-            env_path=args.conda_env,
-            user_env_vars=args.env,
-            dry_run=args.dry_run,
-        )
-        return 0
-
-    if cmd == "claude":
-        if not args.aws_profile:
-            print("--aws-profile is required for Claude.", file=sys.stderr)
-            raise SystemExit(1)
-
-        run_container(
-            backend,
-            args.arch,
-            runtime_target,
-            "claude",
-            [
-                "--env",
-                "CLAUDE_CODE_USE_BEDROCK=1",
-                "--env",
-                f"AWS_REGION={args.aws_region}",
-                "--env",
-                f"AWS_PROFILE={args.aws_profile}",
-                "--env",
-                "CLAUDE_CODE_NO_FLICKER=1",
-                "--env",
-                "DISABLE_AUTOUPDATER=1",
-                "--env",
-                "DISABLE_INSTALLATION_CHECKS=1",
-                *claude_mounts,
-            ],
-            ["claude", *tool_args],
-            args.container_username,
-            args.container_home,
-            args.container_home_host_dir,
-            args.workspace_mount,
-            args.path_prepend,
-            extra_mounts,
-            env_path=args.conda_env,
-            user_env_vars=args.env,
-            dry_run=args.dry_run,
-        )
-        return 0
-
-    raise AssertionError(f"Unhandled command: {cmd}")
+    launcher = Launcher(args)
+    launcher.run()
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(main(sys.argv[1:]))
+        sys.exit(main(sys.argv[1:]))
     except subprocess.CalledProcessError as exc:
-        raise SystemExit(exc.returncode) from exc
+        sys.exit(exc.returncode)

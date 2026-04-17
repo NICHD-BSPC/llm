@@ -1,0 +1,121 @@
+variables:
+  APPTAINER_VERSION: "1.3.6"
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+stages:
+  - test
+
+podman-build:
+  stage: test
+  image: quay.io/podman/stable
+  before_script:
+    - dnf install -y python3 bash bash ca-certificates
+  script:
+    - python3 build.py build
+    - |
+      bash <<'EOF'
+      set -euo pipefail
+
+      log_file="podman-diagnostics.log"
+      : > "$log_file"
+
+      mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache"
+      touch "$HOME/.codex/auth.json" "$HOME/.claude/settings.json" "$HOME/.claude.json" "$HOME/.aws/config"
+
+      echo "HOME=$HOME"
+      id
+      ls -ld "$HOME/.codex" "$HOME/.claude" "$HOME/.aws" || true
+      ls -l "$HOME/.claude.json" || true
+
+      python3 launch.py --verbose --dry-run --backend podman shell tests/container-diagnostics.sh \
+        2>&1 | tee -a "$log_file"
+      status=${PIPESTATUS[0]}
+      if [ "$status" -ne 0 ]; then
+        exit "$status"
+      fi
+
+      script -q -e -c "bash tests/run-diagnostics.sh shell podman" /dev/null \
+        2>&1 | tee -a "$log_file"
+      status=${PIPESTATUS[0]}
+      if [ "$status" -ne 0 ]; then
+        exit "$status"
+      fi
+
+      if grep -q '✗' "$log_file"; then
+        echo "Diagnostics output contained a failure marker (✗)." >&2
+        exit 1
+      fi
+      EOF
+  artifacts:
+    when: always
+    paths:
+      - podman-diagnostics.log
+
+singularity-build:
+  stage: test
+  image: quay.io/singularity/singularity:v4.3.1
+  before_script:
+    - apt-get update
+    - DEBIAN_FRONTEND=noninteractive apt-get install -y python3 bash ca-certificates
+  script:
+    - DEBIAN_FRONTEND=noninteractive apt-get install -y curl podman rsync openssh-client openssh-server bsdutils
+    - apptainer --version
+    - singularity --version
+    - |
+      bash <<'EOF'
+      set -euo pipefail
+
+      mkdir -p "$HOME/.ssh"
+      chmod 700 "$HOME/.ssh"
+      ssh-keygen -t ed25519 -f "$HOME/.ssh/id_ed25519" -N ""
+      cat "$HOME/.ssh/id_ed25519.pub" >> "$HOME/.ssh/authorized_keys"
+      chmod 600 "$HOME/.ssh/authorized_keys"
+      ssh-keyscan -H localhost >> "$HOME/.ssh/known_hosts"
+      chmod 600 "$HOME/.ssh/known_hosts"
+
+      eval "$(ssh-agent -s)"
+      ssh-add "$HOME/.ssh/id_ed25519"
+
+      mkdir -p /run/sshd
+      /usr/sbin/sshd
+
+      python3 build.py publish \
+        --remote-path /tmp/llm-ci \
+        --force \
+        localhost
+
+      ssh localhost test -f /tmp/llm-ci/llm.sif
+      EOF
+    - |
+      bash <<'EOF'
+      set -euo pipefail
+
+      log_file="singularity-diagnostics.log"
+      : > "$log_file"
+
+      mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache"
+      touch "$HOME/.codex/auth.json" "$HOME/.claude/settings.json" "$HOME/.claude.json" "$HOME/.aws/config"
+      cp /tmp/llm-ci/llm.sif .
+
+      script -q -e -c "bash tests/run-diagnostics.sh shell singularity" /dev/null \
+        2>&1 | tee -a "$log_file"
+      status=${PIPESTATUS[0]}
+      if [ "$status" -ne 0 ]; then
+        exit "$status"
+      fi
+
+      if grep -q '✗' "$log_file"; then
+        echo "Diagnostics output contained a failure marker (✗)." >&2
+        exit 1
+      fi
+      EOF
+  artifacts:
+    when: always
+    paths:
+      - singularity-diagnostics.log
+      - llm.sif

@@ -12,7 +12,7 @@ Project-level configs can be also set, see [Claude Code settings documentation](
 
 For notes on configs in containers, see [container-notes](container-notes.md#persistent-mounts-and-configs).
 
-> [!note]
+> [!NOTE]
 > Config is in JSON format. Examples below will be written as complete JSON (all config wrapped in `{` and `}`). JSON does not formally support comments. Ensure there is no trailing comma on the last entry. 
 > 
 > As an example, if your file looks like this:

@@ -1,8 +1,5 @@
 # Running agents in containers
 
-> [!important] Contents
-> [TOC]
-
 Here we document how to run agents inside containers, either on a local machine (like a laptop) or on a remote (like Biowulf). See [container-notes](container-notes.md) for what this means.
 
 ## Prerequisites

@@ -1,8 +1,5 @@
 # Setting up AWS STRIDES Single Sign-On
 
-> [!important] Contents
-> [TOC]
-
 **Why?** AWS SSO is required for using Amazon Bedrock models, e.g., for Claude Code. If
 you're only using Codex, you don't need this.
 
@@ -31,7 +28,7 @@ This is initial setup -- it only needs to be done once per group.
   - CIT will either send each user an email directly or cause one to be sent through AWS (the latter appeared to have issues, so this may need more manual intervention on CIT’s part). The email will contain your username, a temp password, and a URL
   - Visit the URL, log in, change the password, set up MFA
 
-> [!note] Check
+> [!TIP]
 > You are complete with this phase when you can successfully log in to https://nih.awsapps.com/start
 
 ## 2. AWS CLI v2 setup (one time per user)
@@ -42,7 +39,7 @@ AWS CLI v2 is used to authenticate with AWS. It is used by Claude Code to automa
   - **If you plan to use the container tools in this repo**, you should create the conda environment as documented at [Conda env](conda-env.md).
   - **If you already have it installed**, make sure you are using version 2. See the [v1 to v2 migration docs](https://docs.aws.amazon.com/cli/latest/userguide/cliv2-migration.html) if you need to upgrade. Or you can use the conda env, since it is isolated from any existing installation.
 
-> [!note] Check
+> [!TIP]
 > You are complete with this phase when you open a new terminal (activating the conda env if needed) and running `aws` gives the following, which shows that the tool is installed and responding:
 >
 > ```text
@@ -114,7 +111,7 @@ aws sso login
 
 This will open a browser to log in. It may automatically say, "Your credentials have been shared successfully and can be used until your session expires. You can now close this tab."
 
-> [!note] Check
+> [!TIP]
 > You are complete with this phase when you run `aws sso login` in the terminal and you get the "credentials have been shared successfully" message in a browser.
 
 ## 4. Routine usage
