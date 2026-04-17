@@ -142,7 +142,7 @@ class PodmanBackend(Backend):
             self.command, "run", "--rm", "-it",
             "--platform", args.arch,
             #
-            # "--userns=keep-id",
+            "--userns=keep-id",
             # "--user", str(uid),
             *env_args,
             *mount_args,
