@@ -11,13 +11,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  diagnostics:
+  podman-build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      # Pyhon required for running the launch and build scripts
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -48,12 +49,8 @@ jobs:
             exit "$status"
           fi
 
-          # the launch script uses -it when running the container, but this
-          # test is not running in a TTY.
-          # -q omits start/stop messages; -e return exit code so we fail
-          # workflow if needed; -c don't start shell. Taken together (plus
-          # logging to /dev/null) means essentially: "run the command in a fake
-          # terminal"
+          # the launch script uses `-it` when running the container, but this
+          # test is not running in a TTY. So we fake it with `script`.
           script -q -e -c "bash tests/run-diagnostics.sh shell podman" /dev/null 2>&1 | tee -a "$log_file"
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
@@ -72,7 +69,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      # Pyhon required for running the launch and build scripts
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -117,7 +113,6 @@ jobs:
 
       - name: Verify Singularity artifact exists
         run: ssh localhost test -f /tmp/llm-ci/llm.sif
-
 
       - name: Run shell diagnostics
         run: |
