@@ -2,6 +2,7 @@ name: Build and test containers
 
 env:
   APPTAINER_VERSION: "1.3.6"
+  REGISTRY: ghcr.io
 
 on:
   push:
@@ -13,6 +14,9 @@ on:
 jobs:
   podman-build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Check out repository
@@ -62,8 +66,30 @@ jobs:
             exit 1
           fi
 
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login "${{ env.REGISTRY }}" -u "${{ github.actor }}" --password-stdin
+
+      - name: Push Podman image to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        run: |
+          repo_lc="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          image_base="${{ env.REGISTRY }}/${repo_lc}"
+          sha_tag="sha-${GITHUB_SHA}"
+
+          podman tag localhost/llm-devcontainer:latest "${image_base}:${sha_tag}"
+          podman push "${image_base}:${sha_tag}"
+
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            podman tag localhost/llm-devcontainer:latest "${image_base}:latest"
+            podman push "${image_base}:latest"
+          fi
+
   singularity-build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Check out repository
@@ -130,4 +156,21 @@ jobs:
           if grep -q '✗' "$log_file"; then
             echo "Diagnostics output contained a failure marker (✗)." >&2
             exit 1
+          fi
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | apptainer registry login --username "${{ github.actor }}" --password-stdin "docker://${{ env.REGISTRY }}"
+
+      - name: Push Singularity SIF to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        run: |
+          repo_lc="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          image_base="oras://${{ env.REGISTRY }}/${repo_lc}-sif"
+          sha_tag="sha-${GITHUB_SHA}"
+
+          apptainer push --allow-unsigned ./llm.sif "${image_base}:${sha_tag}"
+
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            apptainer push --allow-unsigned ./llm.sif "${image_base}:latest"
           fi
