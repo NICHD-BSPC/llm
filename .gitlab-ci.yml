@@ -10,19 +10,11 @@ workflow:
 stages:
   - test
 
-.default_job: &default_job
-  stage: test
-  image: ubuntu:24.04
-  before_script:
-    - apt-get update
-    - DEBIAN_FRONTEND=noninteractive apt-get install -y python3 bash ca-certificates
-
 podman-build:
   stage: test
   image: quay.io/podman/stable
   before_script:
-    - apt-get update
-    - DEBIAN_FRONTEND=noninteractive apt-get install -y python3 bash ca-certificates
+    - dnf install -y python3 bash bash ca-certificates
   script:
     - python3 build.py build
     - |
@@ -66,7 +58,7 @@ podman-build:
 
 singularity-build:
   stage: test
-  image: quay.io/singularity/singularity:v4
+  image: quay.io/singularity/singularity:v4.3.1
   before_script:
     - apt-get update
     - DEBIAN_FRONTEND=noninteractive apt-get install -y python3 bash ca-certificates
