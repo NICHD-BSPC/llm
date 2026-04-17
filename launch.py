@@ -192,13 +192,20 @@ class SingularityBackend(Backend):
     def build_command(self, env_vars, mounts, command_args):
         args = self.args
 
+        env_vars = dict(env_vars)
+        home_dir = env_vars.pop("HOME", None)
         env_args = self.build_env_args(env_vars)
         mount_args = self.build_mount_args(mounts)
+        home_arg = []
+
+        if home_dir:
+            host_home = str(Path(args.container_local_host_dir).expanduser().parent)
+            home_arg = ["--home", f"{host_home}:{home_dir}"]
 
         # fmt: off
         return [
             self.command, "exec",
-            "--no-home",  # Prevent auto-mounting real $HOME
+            *home_arg,
             *env_args,
             *mount_args,
             "--pwd", args.workspace_mount or os.getcwd(),
@@ -253,8 +260,9 @@ class Launcher:
 
     def setup_host_paths(self):
         """Create necessary host directories before launch."""
-        bin_dir = Path(self.args.container_local_host_dir).expanduser() / "bin"
-        bin_dir.mkdir(parents=True, exist_ok=True)
+        local_dir = Path(self.args.container_local_host_dir).expanduser()
+        local_dir.mkdir(parents=True, exist_ok=True)
+        (local_dir / "bin").mkdir(parents=True, exist_ok=True)
 
     def _is_path_inside_workspace(self, path, host_cwd):
         """Check if a path is inside the workspace directory."""
