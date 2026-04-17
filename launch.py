@@ -141,8 +141,9 @@ class PodmanBackend(Backend):
         return [
             self.command, "run", "--rm", "-it",
             "--platform", args.arch,
-            "--userns=keep-id",
-            "--user", str(uid),
+            #
+            # "--userns=keep-id",
+            # "--user", str(uid),
             *env_args,
             *mount_args,
             "--workdir", args.workspace_mount or os.getcwd(),
