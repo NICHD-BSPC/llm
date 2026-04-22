@@ -303,6 +303,17 @@ class Launcher:
         local_dir.mkdir(parents=True, exist_ok=True)
         (local_dir / "bin").mkdir(parents=True, exist_ok=True)
 
+    def setup_claude_config(self):
+        """Create default ~/.claude.json if it doesn't exist to prevent Claude Code from hanging."""
+        if self.args.cmd != "claude":
+            return
+
+        claude_config = Path.home() / ".claude.json"
+        if not claude_config.exists():
+            claude_config.write_text("{}\n")
+            if self.args.verbose:
+                print(f"Created default config: {claude_config}", file=sys.stderr)
+
     def _is_path_inside_workspace(self, path, host_cwd):
         """Check if a path is inside the workspace directory."""
         path_str = str(path)
@@ -526,6 +537,7 @@ class Launcher:
         args = self.args
 
         self.setup_host_paths()
+        self.setup_claude_config()
         if not args.dry_run:
             self.backend.check_availability()
             self.backend.validate_image()
