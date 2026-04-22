@@ -67,6 +67,20 @@ SUBCOMMAND_CONFIG = {
     },
 }
 
+# If certs provided, mount them here inside the container
+CONTAINER_CERTS_PATH = "/home/devuser/.local/share/llm-devcontainer/certs/cert.pem"
+
+# The various env vars tools might look at for additional certs. We'll add them
+# all to the container to cover all the bases.
+CERT_ENV_VARS = (
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "GIT_SSL_CAINFO",
+    "AWS_CA_BUNDLE",
+    "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+    "CURL_CA_BUNDLE",
+)
 
 class Backend:
     """Base class for container backends.
@@ -258,6 +272,22 @@ class Launcher:
                 sys.exit(1)
             args.conda_env = str(conda_path)
 
+        if args.certs:
+            certs_path = Path(args.certs).expanduser().resolve()
+            if not certs_path.exists():
+                print(
+                    f"Error: --certs file not found: {args.certs}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if not certs_path.is_file():
+                print(
+                    f"Error: --certs must point to a file, got: {args.certs}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            args.certs = str(certs_path)
+
     def setup_host_paths(self):
         """Create necessary host directories before launch."""
         local_dir = Path(self.args.container_local_host_dir).expanduser()
@@ -346,6 +376,10 @@ class Launcher:
             env["AWS_REGION"] = args.aws_region
             env["AWS_PROFILE"] = args.aws_profile or ""
 
+        if args.certs:
+            for var_name in CERT_ENV_VARS:
+                env[var_name] = CONTAINER_CERTS_PATH
+
         # Add user-provided env vars (these come last)
         for env_var in args.env:
             if "=" not in env_var:
@@ -387,6 +421,9 @@ class Launcher:
             conda_path = args.conda_env
             if not self._is_path_inside_workspace(conda_path, host_cwd):
                 mounts.append((conda_path, conda_path))
+
+        if args.certs:
+            mounts.append((args.certs, CONTAINER_CERTS_PATH))
 
         # Add credential mounts
         for tool in subcommand_config["credentials"]:
@@ -579,6 +616,14 @@ def build_parser():
     parser.add_argument(
         "--conda-env",
         help="Path to conda environment. Its bin/ is prepended to PATH",
+    )
+    parser.add_argument(
+        "--certs",
+        help=(
+            "Path to a PEM certificate bundle to mount into the container and "
+            "export via SSL_CERT_FILE, REQUESTS_CA_BUNDLE, "
+            "NODE_EXTRA_CA_CERTS, and CURL_CA_BUNDLE"
+        ),
     )
 
     # Mounts and environment
