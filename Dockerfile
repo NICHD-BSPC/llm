@@ -5,39 +5,7 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Chicken-or-egg problem: on an enterprise network with TLS interception, we
-# need to install certs...but that needs ca-certificates package, which can't
-# be installed without certs. So we first install ca-certificates *without*
-# TLS, then install the certs, then install everything with the new certs as
-# usual.
-
-COPY certs.pem /tmp/certs.pem
-
-ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
-    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
-    NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt \
-    CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-
-RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) \
-      -exec sed -i \
-        -e 's|http://deb.debian.org|https://deb.debian.org|g' \
-        -e 's|http://security.debian.org|https://security.debian.org|g' \
-        -e 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
-        -e 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' \
-        -e 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' {} + && \
-    apt-get update \
-      -o Acquire::https::Verify-Peer=false \
-      -o Acquire::https::Verify-Host=false && \
-    apt-get install -y --no-install-recommends \
-      -o Acquire::https::Verify-Peer=false \
-      -o Acquire::https::Verify-Host=false \
-      ca-certificates && \
-    if [ -s /tmp/certs.pem ]; then \
-      mkdir -p /usr/local/share/ca-certificates/enterprise; \
-      awk 'BEGIN {c=0} /-----BEGIN CERTIFICATE-----/ {c++} {print > "/usr/local/share/ca-certificates/enterprise/cert-" c ".crt"}' /tmp/certs.pem; \
-      update-ca-certificates 2>&1 | grep -v "skipping ca-certificates.crt"; \
-    fi && \
-    apt-get update && \
+RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       bash \
       bubblewrap \
