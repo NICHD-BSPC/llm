@@ -60,12 +60,16 @@ RUN . /etc/arch.env && \
   ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update && \
   rm -rf /tmp/aws /tmp/awscliv2.zip
 
-# Install Claude CLI, using the GCS bucket parsed from the install script
+# Install Claude CLI, using the download base URL parsed from the install script
 RUN . /etc/arch.env && \
   INSTALL_SCRIPT="$(curl -fsSL https://claude.ai/install.sh)" && \
-  GCS_BUCKET="$(printf '%s' "${INSTALL_SCRIPT}" | grep -o 'GCS_BUCKET="[^"]*"' | head -1 | cut -d'"' -f2)" && \
-  CLAUDE_VERSION="$(curl -fsSL "${GCS_BUCKET}/latest")" && \
-  curl -fsSL "${GCS_BUCKET}/${CLAUDE_VERSION}/${CLAUDE_PLATFORM}/claude" -o /tmp/claude && \
+  DOWNLOAD_BASE_URL="$(printf '%s' "${INSTALL_SCRIPT}" | grep -o 'DOWNLOAD_BASE_URL=\"[^\"]*\"' | head -1 | cut -d'\"' -f2)" && \
+  test -n "${DOWNLOAD_BASE_URL}" && \
+  CLAUDE_VERSION="$(curl -fsSL "${DOWNLOAD_BASE_URL}/latest")" && \
+  CLAUDE_CHECKSUM="$(curl -fsSL "${DOWNLOAD_BASE_URL}/${CLAUDE_VERSION}/manifest.json" | jq -r --arg platform "${CLAUDE_PLATFORM}" '.platforms[$platform].checksum // empty')" && \
+  test -n "${CLAUDE_CHECKSUM}" && \
+  curl -fsSL "${DOWNLOAD_BASE_URL}/${CLAUDE_VERSION}/${CLAUDE_PLATFORM}/claude" -o /tmp/claude && \
+  printf '%s  %s\n' "${CLAUDE_CHECKSUM}" /tmp/claude | sha256sum -c - && \
   install -m 0755 /tmp/claude /usr/local/bin/claude && \
   rm -f /tmp/claude
 
