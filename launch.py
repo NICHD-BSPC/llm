@@ -82,6 +82,10 @@ CERT_ENV_VARS = (
     "CURL_CA_BUNDLE",
 )
 
+DEFAULT_PODMAN_IMAGE = "ghcr.io/nichd-bspc/llm"
+DEFAULT_SINGULARITY_IMAGE = "ghcr.io/nichd-bspc/llm-sif"
+
+
 class Backend:
     """Base class for container backends.
 
@@ -575,7 +579,7 @@ def build_parser():
     )
     parser.add_argument(
         "--image-name",
-        default="localhost/llm-devcontainer:latest",
+        default=DEFAULT_PODMAN_IMAGE,
         help="Container image name for podman (default: %(default)s, needs to match name given to build.py)",
     )
     parser.add_argument(
@@ -585,7 +589,7 @@ def build_parser():
     )
     parser.add_argument(
         "--sif-path",
-        default=str(Path(__file__).resolve().with_name("llm.sif")),
+        default=DEFAULT_SINGULARITY_IMAGE,
         help="Singularity image path. Relative paths resolved relative to this script (default: %(default)s)",
     )
 
