@@ -97,25 +97,30 @@ class Backend:
         self.args = args
 
     def build_env_args(self, env_vars):
+        """Given a dict of env vars, build the arguments for the container
+        runtime to add the env vars to the container."""
         env_args = []
         for key, value in env_vars.items():
             env_args.extend(["--env", f"{key}={value}"])
         return env_args
 
     def build_mount_args(self, mounts):
+        """Given a dict of mounts, build the arguments for the container to
+        mount them all. """
         mount_args = []
         for host_path, container_path in mounts:
             mount_args.extend([self.mount_flag, f"{host_path}:{container_path}"])
         return mount_args
 
     def check_availability(self):
+        "Ensure the container runtime is available."
         if shutil.which(self.command) is None:
             print(f"Error: missing command '{self.command}' in PATH.", file=sys.stderr)
             sys.exit(1)
 
     def validate_image(self):
         """Validate that the container image exists. Override in subclasses."""
-        pass
+        raise NotImplementedError
 
     def build_command(self, env_vars, mounts, command_args):
         raise NotImplementedError
@@ -263,7 +268,7 @@ class Launcher:
             if (
                 not conda_path.exists()
                 or not conda_path.is_dir()
-                or not (conda_bin / "bin").is_dir()
+                or not (conda_path / "bin").is_dir()
             ):
                 print(
                     f"Error: --conda-env path needs to be a directory containing a bin/ directory. Got: {args.conda_env}",
