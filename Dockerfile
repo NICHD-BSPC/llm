@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM ubuntu:24.04
 
 ARG USERNAME=devuser
@@ -5,8 +6,10 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
+    APT_HTTPS_OPTS="$(if [ -f /run/secrets/mitm_ca_bundle.pem ]; then printf '%s' '-o Acquire::https::CaInfo=/run/secrets/mitm_ca_bundle.pem'; fi)" && \
+    apt-get ${APT_HTTPS_OPTS} update && \
+    apt-get ${APT_HTTPS_OPTS} install -y --no-install-recommends \
       bash \
       bubblewrap \
       ca-certificates \
@@ -54,16 +57,24 @@ RUN ARCH="$(dpkg --print-architecture)" && \
   esac
 
 # Install AWS CLI v2
-RUN . /etc/arch.env && \
+RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
+  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
+  if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
+  export CURL_CA_BUNDLE && \
+  . /etc/arch.env && \
   curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o /tmp/awscliv2.zip && \
   cd /tmp && unzip -q awscliv2.zip && \
   ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update && \
   rm -rf /tmp/aws /tmp/awscliv2.zip
 
 # Install Claude CLI, using the download base URL parsed from the install script
-RUN . /etc/arch.env && \
+RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
+  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
+  if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
+  export CURL_CA_BUNDLE && \
+  . /etc/arch.env && \
   INSTALL_SCRIPT="$(curl -fsSL https://claude.ai/install.sh)" && \
-  DOWNLOAD_BASE_URL="$(printf '%s' "${INSTALL_SCRIPT}" | grep -o 'DOWNLOAD_BASE_URL=\"[^\"]*\"' | head -1 | cut -d'\"' -f2)" && \
+  DOWNLOAD_BASE_URL="$(printf '%s' "${INSTALL_SCRIPT}" | grep -o 'DOWNLOAD_BASE_URL=\"[^\"]*\"' | head -1 | cut -d'"' -f2)" && \
   test -n "${DOWNLOAD_BASE_URL}" && \
   CLAUDE_VERSION="$(curl -fsSL "${DOWNLOAD_BASE_URL}/latest")" && \
   CLAUDE_CHECKSUM="$(curl -fsSL "${DOWNLOAD_BASE_URL}/${CLAUDE_VERSION}/manifest.json" | jq -r --arg platform "${CLAUDE_PLATFORM}" '.platforms[$platform].checksum // empty')" && \
@@ -74,7 +85,11 @@ RUN . /etc/arch.env && \
   rm -f /tmp/claude
 
 # Install Codex from the published GitHub release tarball.
-RUN . /etc/arch.env && \
+RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
+  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
+  if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
+  export CURL_CA_BUNDLE && \
+  . /etc/arch.env && \
   CODEX_TAG="$(curl -fsSL https://api.github.com/repos/openai/codex/releases/latest | jq -r '.tag_name')" && \
   CODEX_VERSION="${CODEX_TAG#rust-v}" && \
   test -n "${CODEX_VERSION}" && \

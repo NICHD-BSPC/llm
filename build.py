@@ -5,7 +5,6 @@ import getpass
 import os
 import shlex
 import subprocess
-import shutil
 from pathlib import Path
 
 
@@ -17,7 +16,6 @@ CONTAINER_USERNAME = "devuser"
 DEFAULT_REMOTE_TAR_NAME = "img.tar"
 DEFAULT_REMOTE_LAUNCHER_NAME = "launch.py"
 DEFAULT_REMOTE_SIF_NAME = "llm.sif"
-DEFAULT_CERTS_PATH = REPO_ROOT / "certs.pem"
 DRY_RUN = False
 
 
@@ -73,33 +71,24 @@ def resolve_publish_paths(remote_path, remote_tar, remote_launcher, remote_sif):
     return resolved_tar, resolved_launcher, resolved_sif
 
 
-def ensure_certs_file(source_path):
-    """Copy a user-provided certificate bundle into the repo build context."""
-    target_path = DEFAULT_CERTS_PATH
-    if not source_path.exists():
-        target_path.touch()
-        print(f"No certificate bundle found at {source_path}; creating empty bundle at {target_path}")
-        return
-
-    if source_path == target_path:
-        print(f"Using certificate bundle from {target_path}")
-    else:
-        shutil.copyfile(source_path, target_path)
-        print(f"Copied certificate bundle from {source_path} to {target_path}")
-
-
-def build_image(image_name, arch, *args, certs_path=DEFAULT_CERTS_PATH):
+def build_image(image_name, arch, *args, certs_path=None):
     "Build podman image"
 
-    ensure_certs_file(certs_path)
-    run(
+    cmd = [
+        "podman",
+        "build",
+        "--build-arg",
+        f"USERNAME={CONTAINER_USERNAME}",
+        "--platform",
+        arch,
+    ]
+    if certs_path is not None:
+        certs_path = certs_path.expanduser().resolve()
+        if not certs_path.is_file():
+            raise SystemExit(f"Certificate bundle not found: {certs_path}")
+        cmd.extend(["--secret", f"id=mitm_ca_bundle,src={certs_path}"])
+    cmd.extend(
         [
-            "podman",
-            "build",
-            "--build-arg",
-            f"USERNAME={CONTAINER_USERNAME}",
-            "--platform",
-            arch,
             "-t",
             image_name,
             "-f",
@@ -108,6 +97,7 @@ def build_image(image_name, arch, *args, certs_path=DEFAULT_CERTS_PATH):
             *args,
         ]
     )
+    run(cmd)
 
 
 def save_image(image_name, tar_path):
@@ -214,13 +204,12 @@ def build_parser():
         help="Print commands without running them",
     )
     common.add_argument(
-        "--certs-file",
+        "--certs",
         type=Path,
-        default=DEFAULT_CERTS_PATH,
+        default=None,
         help=(
-            "Certificate bundle copied into the image trust store as provided; "
-            "if missing, an empty bundle is used "
-            f"(default: {DEFAULT_CERTS_PATH})"
+            "Optional PEM bundle passed to podman build as the "
+            "'mitm_ca_bundle' secret for temporary TLS interception trust"
         ),
     )
 
@@ -309,7 +298,7 @@ def main(argv=None):
             args.image_name,
             args.arch,
             *no_cache_args,
-            certs_path=args.certs_file.expanduser().resolve(),
+            certs_path=args.certs,
         )
         return 0
 
@@ -338,7 +327,7 @@ def main(argv=None):
             args.image_name,
             args.arch,
             *no_cache_args,
-            certs_path=args.certs_file.expanduser().resolve(),
+            certs_path=args.certs,
         )
         print(f"Saving image {args.image_name} to {local_tar} ...")
         save_image(args.image_name, local_tar)
