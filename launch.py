@@ -233,6 +233,7 @@ class SingularityBackend(Backend):
             *home_arg,
             *env_args,
             *mount_args,
+            "--cleanenv",
             "--pwd", args.workspace_mount or os.getcwd(),
             args.sif_path,
             *command_args,
