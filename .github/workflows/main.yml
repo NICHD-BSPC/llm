@@ -3,6 +3,7 @@ name: Build and test containers
 env:
   APPTAINER_VERSION: "1.3.6"
   REGISTRY: ghcr.io
+  PODMAN_IMAGE_NAME: localhost/llm-devcontainer:latest
 
 on:
   push:
@@ -47,7 +48,7 @@ jobs:
           id
           ls -ld "$HOME/.codex" "$HOME/.claude" "$HOME/.aws" || true
           ls -l "$HOME/.claude.json" || true
-          python3 launch.py --verbose --dry-run --backend podman shell tests/container-diagnostics.sh 2>&1 | tee -a "$log_file"
+          python3 launch.py --verbose --dry-run --backend podman --image-name "${PODMAN_IMAGE_NAME}" shell tests/container-diagnostics.sh 2>&1 | tee -a "$log_file"
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             exit "$status"
@@ -55,7 +56,7 @@ jobs:
 
           # the launch script uses `-it` when running the container, but this
           # test is not running in a TTY. So we fake it with `script`.
-          script -q -e -c "bash tests/run-diagnostics.sh shell podman" /dev/null 2>&1 | tee -a "$log_file"
+          script -q -e -c "bash tests/run-diagnostics.sh --image-name ${PODMAN_IMAGE_NAME} shell podman" /dev/null 2>&1 | tee -a "$log_file"
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             exit "$status"
