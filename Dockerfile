@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM ubuntu:24.04
 
 ARG USERNAME=devuser
@@ -5,40 +6,10 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Chicken-or-egg problem: on an enterprise network with TLS interception, we
-# need to install certs...but that needs ca-certificates package, which can't
-# be installed without certs. So we first install ca-certificates *without*
-# TLS, then install the certs, then install everything with the new certs as
-# usual.
-
-COPY certs.pem /tmp/certs.pem
-
-ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
-    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
-    NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt \
-    CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-
-RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) \
-      -exec sed -i \
-        -e 's|http://deb.debian.org|https://deb.debian.org|g' \
-        -e 's|http://security.debian.org|https://security.debian.org|g' \
-        -e 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
-        -e 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' \
-        -e 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' {} + && \
-    apt-get update \
-      -o Acquire::https::Verify-Peer=false \
-      -o Acquire::https::Verify-Host=false && \
-    apt-get install -y --no-install-recommends \
-      -o Acquire::https::Verify-Peer=false \
-      -o Acquire::https::Verify-Host=false \
-      ca-certificates && \
-    if [ -s /tmp/certs.pem ]; then \
-      mkdir -p /usr/local/share/ca-certificates/enterprise; \
-      awk 'BEGIN {c=0} /-----BEGIN CERTIFICATE-----/ {c++} {print > "/usr/local/share/ca-certificates/enterprise/cert-" c ".crt"}' /tmp/certs.pem; \
-      update-ca-certificates 2>&1 | grep -v "skipping ca-certificates.crt"; \
-    fi && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
+RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
+    APT_HTTPS_OPTS="$(if [ -f /run/secrets/mitm_ca_bundle.pem ]; then printf '%s' '-o Acquire::https::CaInfo=/run/secrets/mitm_ca_bundle.pem'; fi)" && \
+    apt-get ${APT_HTTPS_OPTS} update && \
+    apt-get ${APT_HTTPS_OPTS} install -y --no-install-recommends \
       bash \
       bubblewrap \
       ca-certificates \
@@ -86,23 +57,39 @@ RUN ARCH="$(dpkg --print-architecture)" && \
   esac
 
 # Install AWS CLI v2
-RUN . /etc/arch.env && \
+RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
+  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
+  if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
+  export CURL_CA_BUNDLE && \
+  . /etc/arch.env && \
   curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o /tmp/awscliv2.zip && \
   cd /tmp && unzip -q awscliv2.zip && \
   ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update && \
   rm -rf /tmp/aws /tmp/awscliv2.zip
 
-# Install Claude CLI, using the GCS bucket parsed from the install script
-RUN . /etc/arch.env && \
+# Install Claude CLI, using the download base URL parsed from the install script
+RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
+  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
+  if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
+  export CURL_CA_BUNDLE && \
+  . /etc/arch.env && \
   INSTALL_SCRIPT="$(curl -fsSL https://claude.ai/install.sh)" && \
-  GCS_BUCKET="$(printf '%s' "${INSTALL_SCRIPT}" | grep -o 'GCS_BUCKET="[^"]*"' | head -1 | cut -d'"' -f2)" && \
-  CLAUDE_VERSION="$(curl -fsSL "${GCS_BUCKET}/latest")" && \
-  curl -fsSL "${GCS_BUCKET}/${CLAUDE_VERSION}/${CLAUDE_PLATFORM}/claude" -o /tmp/claude && \
+  DOWNLOAD_BASE_URL="$(printf '%s' "${INSTALL_SCRIPT}" | grep -o 'DOWNLOAD_BASE_URL=\"[^\"]*\"' | head -1 | cut -d'"' -f2)" && \
+  test -n "${DOWNLOAD_BASE_URL}" && \
+  CLAUDE_VERSION="$(curl -fsSL "${DOWNLOAD_BASE_URL}/latest")" && \
+  CLAUDE_CHECKSUM="$(curl -fsSL "${DOWNLOAD_BASE_URL}/${CLAUDE_VERSION}/manifest.json" | jq -r --arg platform "${CLAUDE_PLATFORM}" '.platforms[$platform].checksum // empty')" && \
+  test -n "${CLAUDE_CHECKSUM}" && \
+  curl -fsSL "${DOWNLOAD_BASE_URL}/${CLAUDE_VERSION}/${CLAUDE_PLATFORM}/claude" -o /tmp/claude && \
+  printf '%s  %s\n' "${CLAUDE_CHECKSUM}" /tmp/claude | sha256sum -c - && \
   install -m 0755 /tmp/claude /usr/local/bin/claude && \
   rm -f /tmp/claude
 
 # Install Codex from the published GitHub release tarball.
-RUN . /etc/arch.env && \
+RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
+  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
+  if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
+  export CURL_CA_BUNDLE && \
+  . /etc/arch.env && \
   CODEX_TAG="$(curl -fsSL https://api.github.com/repos/openai/codex/releases/latest | jq -r '.tag_name')" && \
   CODEX_VERSION="${CODEX_TAG#rust-v}" && \
   test -n "${CODEX_VERSION}" && \

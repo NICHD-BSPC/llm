@@ -67,6 +67,23 @@ SUBCOMMAND_CONFIG = {
     },
 }
 
+# If certs provided, mount them here inside the container.
+CONTAINER_CERTS_PATH = "/tmp/llm-devcontainer-cert.pem"
+
+# The various env vars tools might look at for additional certs. We'll add them
+# all to the container to cover all the bases.
+CERT_FILE_ENV_VARS = (
+    "SSL_CERT_FILE",
+    "GIT_SSL_CAINFO",
+    "AWS_CA_BUNDLE",
+    "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+    "CURL_CA_BUNDLE",
+)
+
+DEFAULT_PODMAN_IMAGE = "ghcr.io/nichd-bspc/llm"
+DEFAULT_SINGULARITY_IMAGE = "ghcr.io/nichd-bspc/llm-sif"
+
 
 class Backend:
     """Base class for container backends.
@@ -83,25 +100,30 @@ class Backend:
         self.args = args
 
     def build_env_args(self, env_vars):
+        """Given a dict of env vars, build the arguments for the container
+        runtime to add the env vars to the container."""
         env_args = []
         for key, value in env_vars.items():
             env_args.extend(["--env", f"{key}={value}"])
         return env_args
 
     def build_mount_args(self, mounts):
+        """Given a dict of mounts, build the arguments for the container to
+        mount them all. """
         mount_args = []
         for host_path, container_path in mounts:
             mount_args.extend([self.mount_flag, f"{host_path}:{container_path}"])
         return mount_args
 
     def check_availability(self):
+        "Ensure the container runtime is available."
         if shutil.which(self.command) is None:
             print(f"Error: missing command '{self.command}' in PATH.", file=sys.stderr)
             sys.exit(1)
 
     def validate_image(self):
         """Validate that the container image exists. Override in subclasses."""
-        pass
+        raise NotImplementedError
 
     def build_command(self, env_vars, mounts, command_args):
         raise NotImplementedError
@@ -249,7 +271,7 @@ class Launcher:
             if (
                 not conda_path.exists()
                 or not conda_path.is_dir()
-                or not (conda_bin / "bin").is_dir()
+                or not (conda_path / "bin").is_dir()
             ):
                 print(
                     f"Error: --conda-env path needs to be a directory containing a bin/ directory. Got: {args.conda_env}",
@@ -258,11 +280,38 @@ class Launcher:
                 sys.exit(1)
             args.conda_env = str(conda_path)
 
+        if args.certs:
+            certs_path = Path(args.certs).expanduser().resolve()
+            if not certs_path.exists():
+                print(
+                    f"Error: --certs file not found: {args.certs}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if not certs_path.is_file():
+                print(
+                    f"Error: --certs must point to a file, got: {args.certs}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            args.certs = str(certs_path)
+
     def setup_host_paths(self):
         """Create necessary host directories before launch."""
         local_dir = Path(self.args.container_local_host_dir).expanduser()
         local_dir.mkdir(parents=True, exist_ok=True)
         (local_dir / "bin").mkdir(parents=True, exist_ok=True)
+
+    def setup_claude_config(self):
+        """Create default ~/.claude.json if it doesn't exist to prevent Claude Code from hanging."""
+        if self.args.cmd != "claude":
+            return
+
+        claude_config = Path.home() / ".claude.json"
+        if not claude_config.exists():
+            claude_config.write_text("{}\n")
+            if self.args.verbose:
+                print(f"Created default config: {claude_config}", file=sys.stderr)
 
     def _is_path_inside_workspace(self, path, host_cwd):
         """Check if a path is inside the workspace directory."""
@@ -346,6 +395,10 @@ class Launcher:
             env["AWS_REGION"] = args.aws_region
             env["AWS_PROFILE"] = args.aws_profile or ""
 
+        if args.certs:
+            for var_name in CERT_FILE_ENV_VARS:
+                env[var_name] = CONTAINER_CERTS_PATH
+
         # Add user-provided env vars (these come last)
         for env_var in args.env:
             if "=" not in env_var:
@@ -387,6 +440,9 @@ class Launcher:
             conda_path = args.conda_env
             if not self._is_path_inside_workspace(conda_path, host_cwd):
                 mounts.append((conda_path, conda_path))
+
+        if args.certs:
+            mounts.append((args.certs, CONTAINER_CERTS_PATH))
 
         # Add credential mounts
         for tool in subcommand_config["credentials"]:
@@ -480,6 +536,7 @@ class Launcher:
         args = self.args
 
         self.setup_host_paths()
+        self.setup_claude_config()
         if not args.dry_run:
             self.backend.check_availability()
             self.backend.validate_image()
@@ -533,7 +590,7 @@ def build_parser():
     )
     parser.add_argument(
         "--image-name",
-        default="localhost/llm-devcontainer:latest",
+        default=DEFAULT_PODMAN_IMAGE,
         help="Container image name for podman (default: %(default)s, needs to match name given to build.py)",
     )
     parser.add_argument(
@@ -543,7 +600,7 @@ def build_parser():
     )
     parser.add_argument(
         "--sif-path",
-        default=str(Path(__file__).resolve().with_name("llm.sif")),
+        default=DEFAULT_SINGULARITY_IMAGE,
         help="Singularity image path. Relative paths resolved relative to this script (default: %(default)s)",
     )
 
@@ -579,6 +636,14 @@ def build_parser():
     parser.add_argument(
         "--conda-env",
         help="Path to conda environment. Its bin/ is prepended to PATH",
+    )
+    parser.add_argument(
+        "--certs",
+        help=(
+            "Path to a PEM certificate bundle to mount into the container and "
+            "export via SSL_CERT_FILE, REQUESTS_CA_BUNDLE, "
+            "NODE_EXTRA_CA_CERTS, and CURL_CA_BUNDLE"
+        ),
     )
 
     # Mounts and environment

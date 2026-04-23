@@ -48,6 +48,10 @@ Modes:
 Options:
   -e KEY=VALUE   Add custom environment variable (repeatable)
   -m PATH        Add custom mount (repeatable)
+  --image-name NAME
+                 Override podman image name passed to launch.py
+  --sif-path PATH
+                 Override singularity image path passed to launch.py
   --help         Show this help
 
 Arguments:
@@ -69,6 +73,7 @@ EOF
 
 # Parse options
 EXTRA_ARGS=()
+LAUNCH_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help)
@@ -80,6 +85,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         -m)
             EXTRA_ARGS+=(--mount "$2")
+            shift 2
+            ;;
+        --image-name)
+            LAUNCH_ARGS+=(--image-name "$2")
+            shift 2
+            ;;
+        --sif-path)
+            LAUNCH_ARGS+=(--sif-path "$2")
             shift 2
             ;;
         *)
@@ -110,6 +123,7 @@ run_shell_diagnostics() {
 
     python "$LAUNCH_PY" \
         --backend "$BACKEND" \
+        ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"} \
         ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
         shell \
         "$DIAGNOSTICS_SCRIPT"
@@ -134,6 +148,7 @@ Please run: bash tests/container-diagnostics.sh"
 
     python "$LAUNCH_PY" \
         --backend "$BACKEND" \
+        ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"} \
         ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
         codex \
         exec --sandbox danger-full-access "$prompt"
@@ -165,6 +180,7 @@ Please run: bash tests/container-diagnostics.sh"
 
     python "$LAUNCH_PY" \
         --backend "$BACKEND" \
+        ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"} \
         ${AWS_ARGS[@]+"${AWS_ARGS[@]}"} \
         ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
         claude --allowedTools 'Bash()' \
