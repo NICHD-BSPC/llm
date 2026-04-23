@@ -16,6 +16,7 @@ Overview of the flow:
 
 
 import argparse
+import logging
 import os
 import platform
 import shlex
@@ -71,6 +72,23 @@ CERT_FILE_ENV_VARS = (
 DEFAULT_PODMAN_IMAGE = "ghcr.io/nichd-bspc/llm"
 DEFAULT_SINGULARITY_IMAGE = "oras://ghcr.io/nichd-bspc/llm-sif"
 DEFAULT_CERTS_ENV_VAR = "LLM_DEVCONTAINER_CERTS"
+LOGGER = logging.getLogger("launch")
+
+
+def configure_logging(verbose=False):
+    """Configure CLI logging."""
+    LOGGER.handlers.clear()
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    LOGGER.addHandler(handler)
+    LOGGER.setLevel(logging.INFO if verbose else logging.WARNING)
+    LOGGER.propagate = False
+
+
+def fatal(message):
+    """Log an error message and exit."""
+    LOGGER.error(message)
+    raise SystemExit(1)
 
 
 class Backend:
@@ -106,8 +124,7 @@ class Backend:
     def check_availability(self):
         "Ensure the container runtime is available."
         if shutil.which(self.command) is None:
-            print(f"Error: missing command '{self.command}' in PATH.", file=sys.stderr)
-            sys.exit(1)
+            fatal(f"missing command '{self.command}' in PATH.")
 
     def validate_image(self):
         """Validate that the container image exists. Override in subclasses."""
@@ -130,15 +147,10 @@ class PodmanBackend(Backend):
             capture_output=True,
         )
         if result.returncode != 0:
-            print(
-                f"Error: podman image '{self.args.image_name}' not found.",
-                file=sys.stderr,
+            fatal(
+                f"podman image '{self.args.image_name}' not found. "
+                "Build it first or specify a different image with --image-name."
             )
-            print(
-                "Build it first or specify a different image with --image-name.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
 
     def build_command(self, env_vars, mounts, command_args):
         args = self.args
@@ -185,21 +197,12 @@ class SingularityBackend(Backend):
             return
         sif_path = Path(self.args.sif_path)
         if not sif_path.exists():
-            print(
-                f"Error: singularity image '{self.args.sif_path}' not found.",
-                file=sys.stderr,
+            fatal(
+                f"singularity image '{self.args.sif_path}' not found. "
+                "Build it first or specify a different path with --sif-path."
             )
-            print(
-                "Build it first or specify a different path with --sif-path.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
         if not sif_path.is_file():
-            print(
-                f"Error: singularity image '{self.args.sif_path}' is not a file.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            fatal(f"singularity image '{self.args.sif_path}' is not a file.")
 
     def build_command(self, env_vars, mounts, command_args):
         args = self.args
@@ -233,6 +236,7 @@ class Launcher:
 
     def __init__(self, args):
         self.args = args
+        configure_logging(args.verbose)
         self._validate_args()
 
         # Decide which backend subclass to use
@@ -250,11 +254,9 @@ class Launcher:
 
         # a relative --workspace-mount doesn't make sense (what would it be relative to?)
         if args.workspace_mount and not Path(args.workspace_mount).is_absolute():
-            print(
-                f"Error: --workspace-mount must be an absolute path, got: {args.workspace_mount}",
-                file=sys.stderr,
+            fatal(
+                f"--workspace-mount must be an absolute path, got: {args.workspace_mount}"
             )
-            sys.exit(1)
 
         # If mounting a conda env, needs to exist and have a bin dir
         if args.conda_env:
@@ -264,27 +266,18 @@ class Launcher:
                 or not conda_path.is_dir()
                 or not (conda_path / "bin").is_dir()
             ):
-                print(
-                    f"Error: --conda-env path needs to be a directory containing a bin/ directory. Got: {args.conda_env}",
-                    file=sys.stderr,
+                fatal(
+                    "--conda-env path needs to be a directory containing a "
+                    f"bin/ directory. Got: {args.conda_env}"
                 )
-                sys.exit(1)
             args.conda_env = str(conda_path)
 
         if args.certs:
             certs_path = Path(args.certs).expanduser().resolve()
             if not certs_path.exists():
-                print(
-                    f"Error: --certs file not found: {args.certs}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+                fatal(f"--certs file not found: {args.certs}")
             if not certs_path.is_file():
-                print(
-                    f"Error: --certs must point to a file, got: {args.certs}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+                fatal(f"--certs must point to a file, got: {args.certs}")
             args.certs = str(certs_path)
 
     def setup_host_paths(self):
@@ -302,7 +295,7 @@ class Launcher:
         if not claude_config.exists():
             claude_config.write_text("{}\n")
             if self.args.verbose:
-                print(f"Created default config: {claude_config}", file=sys.stderr)
+                LOGGER.info("Created default config: %s", claude_config)
 
     def _is_path_inside_workspace(self, path, host_cwd):
         """Check if a path is inside the workspace directory."""
@@ -476,12 +469,10 @@ class Launcher:
 
             existing_host_path = container_targets.get(container_path)
             if existing_host_path is not None and existing_host_path != host_path:
-                print(
-                    "Error: conflicting mounts for container path "
-                    f"'{container_path}': '{existing_host_path}' and '{host_path}'.",
-                    file=sys.stderr,
+                fatal(
+                    "conflicting mounts for container path "
+                    f"'{container_path}': '{existing_host_path}' and '{host_path}'."
                 )
-                sys.exit(1)
 
             seen_mounts.add(mount_key)
             container_targets[container_path] = host_path
@@ -513,17 +504,16 @@ class Launcher:
             if host_path.exists():
                 mounts.append((str(host_path), container_path))
                 if self.args.verbose:
-                    print(f"Mounting credential: {path_str}", file=sys.stderr)
+                    LOGGER.info("Mounting credential: %s", path_str)
             elif self.args.verbose:
-                print(f"Skipping missing credential: {path_str}", file=sys.stderr)
+                LOGGER.info("Skipping missing credential: %s", path_str)
 
         return mounts
 
     def _parse_mount_spec(self, spec):
         """Parse mount spec: 'HOST' or 'HOST:CONTAINER'."""
         if not spec or spec == ":":
-            print(f"Error: invalid mount specification '{spec}'.", file=sys.stderr)
-            sys.exit(1)
+            fatal(f"invalid mount specification '{spec}'.")
 
         if ":" not in spec:
             # Single path: resolve it and use for both host and container
@@ -532,12 +522,10 @@ class Launcher:
         else:
             host, container = spec.split(":", 1)
             if not host or not container:
-                print(
-                    f"Error: invalid mount specification '{spec}'. "
-                    f"Both host and container paths must be non-empty.",
-                    file=sys.stderr,
+                fatal(
+                    f"invalid mount specification '{spec}'. "
+                    "Both host and container paths must be non-empty."
                 )
-                sys.exit(1)
             # Resolve only host path to absolute (can't resolve container path
             # unless inside container)
             host = str(Path(host).resolve())
