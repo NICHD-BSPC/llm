@@ -111,8 +111,15 @@ and you can authenticate.
 
    .. code-block:: bash
 
+      export CLAUDE_CODE_USE_BEDROCK=1
+      export CLAUDE_CODE_NO_FLICKER=1
+      export CLAUDE_CODE_DISABLE_AUTOUPDATER=1
+      export CLAUDE_CODE_DISABLE_INSTALLATION_CHECKS=1
       export AWS_PROFILE="AWSPowerUserAccess-00001"
       export AWS_REGION=us-east-1
+
+   :cmd:`launch.py` inherits ``AWS_PROFILE`` and ``AWS_REGION`` from the host
+   environment. For a one-off override, pass them with ``--env``.
 
 7. Source your shell config or open a new terminal, then run the same command
    without explicitly specifying the profile:
@@ -168,7 +175,8 @@ Claude Code locally (Podman container)
      a :file:`~/.claude.json` file with an empty JSON array (``{}``)
    - The default podman image was downloaded if needed, a container was created
    - The :file:`~/.claude.json` file and any existing :file:`~/.claude` directory was mounted into the container
-   - The :file:`~/.aws` diretory was mounted into the container so it could see the AWS credentials.
+   - Host variables starting with ``CLAUDE_CODE`` were passed through to the container
+   - Because ``CLAUDE_CODE_USE_BEDROCK=1`` was set, host ``AWS_*`` variables and the :file:`~/.aws` directory were also passed through so Claude could use AWS credentials
 
 Claude Code remote (Singularity)
 --------------------------------
@@ -203,7 +211,9 @@ Claude Code remote (Singularity)
    - :file:`launch.py` detected that you're running on Linux so Singularity is the appropriate container runtime
    - The default Singularity image was downloaded
    - Similar to running locally in a Podman container, the appropriate configs
-     were mounted into the running Singularity container.
+     were mounted into the running Singularity container. With
+     ``CLAUDE_CODE_USE_BEDROCK=1``, that includes host ``AWS_*`` variables and
+     :file:`~/.aws`.
 
 
 Next steps

@@ -44,6 +44,9 @@ Or a slightly more advanced command: give Codex access to a conda environment, s
 
    launch.py --certs certs.pem --conda-env ./env codex --resume 019da126-823a-7993-9fb6-0410bf9ceb54
 
+If you use the same PEM bundle regularly, set ``LLM_DEVCONTAINER_CERTS`` on the
+host and :cmd:`launch.py` will use it as the default for ``--certs``.
+
 
 **Contents**
 
@@ -53,4 +56,3 @@ Or a slightly more advanced command: give Codex access to a conda environment, s
    getting-started-claude
    tools
    container-notes
-

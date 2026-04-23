@@ -91,8 +91,8 @@ above, do the following:
 
       launch.py codex --image-name ghcr.io/nichd-bspc/llm --certs ~/.certs.pem codex
 
-   For convenience, you can use the environment variables ``LLM_IMAGE_NAME`` and ``LLM_CERTS`` to
-   control ``--image-name`` and ``--certs`` defaults.
+   For convenience, you can use the environment variable
+   ``LLM_DEVCONTAINER_CERTS`` to control the ``--certs`` default.
 
 
 Step 3: Remote Codex (Singularity)
