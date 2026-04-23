@@ -42,8 +42,9 @@ SUBCOMMAND_CONFIG = {
         "credentials": ["codex", "claude"],
         "extra_env": {
             "CLAUDE_CODE_USE_BEDROCK": "1",
-            "DISABLE_AUTOUPDATER": "1",
-            "DISABLE_INSTALLATION_CHECKS": "1",
+            "CLAUDE_CODE_NO_FLICKER": "1",
+            "CLAUDE_CODE_DISABLE_AUTOUPDATER": "1",
+            "CLAUDE_CODE_DISABLE_INSTALLATION_CHECKS": "1",
         },
         "include_aws_env": True,
     },
@@ -59,8 +60,8 @@ SUBCOMMAND_CONFIG = {
         "extra_env": {
             "CLAUDE_CODE_USE_BEDROCK": "1",
             "CLAUDE_CODE_NO_FLICKER": "1",
-            "DISABLE_AUTOUPDATER": "1",
-            "DISABLE_INSTALLATION_CHECKS": "1",
+            "CLAUDE_CODE_DISABLE_AUTOUPDATER": "1",
+            "CLAUDE_CODE_DISABLE_INSTALLATION_CHECKS": "1",
         },
         "include_aws_env": True,
         "require_aws_profile": True,
