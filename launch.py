@@ -22,7 +22,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 # Hard-coded credential and config paths.
@@ -70,6 +70,7 @@ CERT_FILE_ENV_VARS = (
 
 DEFAULT_PODMAN_IMAGE = "ghcr.io/nichd-bspc/llm"
 DEFAULT_SINGULARITY_IMAGE = "oras://ghcr.io/nichd-bspc/llm-sif"
+DEFAULT_CERTS_ENV_VAR = "LLM_DEVCONTAINER_CERTS"
 
 
 class Backend:
@@ -638,10 +639,12 @@ def build_parser():
     )
     parser.add_argument(
         "--certs",
+        default=os.environ.get(DEFAULT_CERTS_ENV_VAR),
         help=(
             "Path to a PEM certificate bundle to mount into the container and "
             "export via SSL_CERT_FILE, REQUESTS_CA_BUNDLE, "
-            "NODE_EXTRA_CA_CERTS, and CURL_CA_BUNDLE"
+            "NODE_EXTRA_CA_CERTS, and CURL_CA_BUNDLE. "
+            f"Defaults to ${DEFAULT_CERTS_ENV_VAR} when set."
         ),
     )
 
