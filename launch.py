@@ -456,6 +456,10 @@ class Launcher:
         if self._bedrock_enabled(env_vars or {}):
             mounts.extend(self._credential_mounts("aws"))
 
+        normalized_mounts = self._normalize_mounts(mounts)
+        self._warn_nested_mounts(normalized_mounts)
+        return normalized_mounts
+
     def _normalize_mounts(self, mounts):
         """Deduplicate identical mounts and reject conflicting container paths."""
         seen_mounts = set()
@@ -479,6 +483,57 @@ class Launcher:
             normalized.append((host_path, container_path))
 
         return normalized
+
+    def _warn_nested_mounts(self, mounts):
+        """Warn when one mount path nests inside another mount path."""
+        for index, (host_path, container_path) in enumerate(mounts):
+            for other_host_path, other_container_path in mounts[index + 1 :]:
+                nested_host = self._nested_path_pair(Path(host_path), Path(other_host_path))
+                nested_container = self._nested_path_pair(
+                    PurePosixPath(container_path),
+                    PurePosixPath(other_container_path),
+                )
+
+                if not nested_host and not nested_container:
+                    continue
+
+                details = []
+                if nested_host:
+                    details.append(
+                        f"host paths '{nested_host[0]}' and '{nested_host[1]}'"
+                    )
+                if nested_container:
+                    details.append(
+                        f"container paths '{nested_container[0]}' and '{nested_container[1]}'"
+                    )
+
+                LOGGER.warning(
+                    "nested mounts detected between '%s:%s' and '%s:%s' (%s). "
+                    "Nested mounts can mask each other and cause confusing "
+                    "container behavior.",
+                    host_path,
+                    container_path,
+                    other_host_path,
+                    other_container_path,
+                    "; ".join(details),
+                )
+
+    def _nested_path_pair(self, first, second):
+        """Return (parent, child) when one path is nested inside the other."""
+        if first == second:
+            return None
+
+        try:
+            second.relative_to(first)
+            return str(first), str(second)
+        except ValueError:
+            pass
+
+        try:
+            first.relative_to(second)
+            return str(second), str(first)
+        except ValueError:
+            return None
 
     def _credential_mounts(self, tool):
         """
