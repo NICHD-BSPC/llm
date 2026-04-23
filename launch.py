@@ -31,8 +31,8 @@ CREDENTIAL_PATHS = {
     "claude": (
         "~/.claude",
         "~/.claude.json",
-        "~/.aws",
-    ),  # ~/.aws/sso and ~/.aws/config have credentials
+    ),
+    "aws": ("~/.aws",),  # ~/.aws/sso and ~/.aws/config have credentials
 }
 
 # Unique config for each subcommand
@@ -40,31 +40,17 @@ SUBCOMMAND_CONFIG = {
     "shell": {
         "command": ["/bin/bash"],
         "credentials": ["codex", "claude"],
-        "extra_env": {
-            "CLAUDE_CODE_USE_BEDROCK": "1",
-            "CLAUDE_CODE_NO_FLICKER": "1",
-            "CLAUDE_CODE_DISABLE_AUTOUPDATER": "1",
-            "CLAUDE_CODE_DISABLE_INSTALLATION_CHECKS": "1",
-        },
-        "include_aws_env": True,
+        "extra_env": {},
     },
     "codex": {
         "command": ["codex", "--sandbox", "danger-full-access"],
         "credentials": ["codex"],
         "extra_env": {},
-        "include_aws_env": False,
     },
     "claude": {
         "command": ["claude"],
         "credentials": ["claude"],
-        "extra_env": {
-            "CLAUDE_CODE_USE_BEDROCK": "1",
-            "CLAUDE_CODE_NO_FLICKER": "1",
-            "CLAUDE_CODE_DISABLE_AUTOUPDATER": "1",
-            "CLAUDE_CODE_DISABLE_INSTALLATION_CHECKS": "1",
-        },
-        "include_aws_env": True,
-        "require_aws_profile": True,
+        "extra_env": {},
     },
 }
 
@@ -376,9 +362,33 @@ class Launcher:
 
         return path
 
+    def _parse_user_env(self):
+        """Parse repeatable --env values into a dict."""
+        env = {}
+        for env_var in self.args.env:
+            if "=" not in env_var:
+                fatal(
+                    f"invalid environment variable format '{env_var}'. "
+                    "Expected KEY=VALUE."
+                )
+            key, value = env_var.split("=", 1)
+            env[key] = value
+        return env
+
+    def _host_env_with_prefix(self, prefix):
+        """Return host env vars matching a prefix."""
+        return {
+            key: value for key, value in os.environ.items() if key.startswith(prefix)
+        }
+
+    def _bedrock_enabled(self, env):
+        """Return True when the effective env enables Claude Bedrock."""
+        return env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
+
     def build_env_vars(self, subcommand_config):
         """Build all environment variables for the container."""
         args = self.args
+        user_env = self._parse_user_env()
 
         # Base environment
         env = {
@@ -394,30 +404,27 @@ class Launcher:
         # Add subcommand-specific env
         env.update(subcommand_config["extra_env"])
 
-        # Add AWS env if needed
-        if subcommand_config.get("include_aws_env"):
-            env["AWS_REGION"] = args.aws_region
-            env["AWS_PROFILE"] = args.aws_profile or ""
+        if self.args.cmd in {"claude", "shell"}:
+            env.update(self._host_env_with_prefix("CLAUDE_CODE"))
+
+        effective_env = dict(env)
+
+        # args on the command line win
+        effective_env.update(user_env)
+
+        if self._bedrock_enabled(effective_env):
+            env.update(self._host_env_with_prefix("AWS_"))
 
         if args.certs:
             for var_name in CERT_FILE_ENV_VARS:
                 env[var_name] = CONTAINER_CERTS_PATH
 
         # Add user-provided env vars (these come last)
-        for env_var in args.env:
-            if "=" not in env_var:
-                print(
-                    f"Error: invalid environment variable format '{env_var}'. "
-                    f"Expected KEY=VALUE.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            key, value = env_var.split("=", 1)
-            env[key] = value
+        env.update(user_env)
 
         return env
 
-    def build_mounts(self, subcommand_config):
+    def build_mounts(self, subcommand_config, env_vars=None):
         """Build all mounts for the container."""
         args = self.args
         host_cwd = os.getcwd()
@@ -452,7 +459,8 @@ class Launcher:
         for tool in subcommand_config["credentials"]:
             mounts.extend(self._credential_mounts(tool))
 
-        return self._normalize_mounts(mounts)
+        if self._bedrock_enabled(env_vars or {}):
+            mounts.extend(self._credential_mounts("aws"))
 
     def _normalize_mounts(self, mounts):
         """Deduplicate identical mounts and reject conflicting container paths."""
@@ -547,17 +555,16 @@ class Launcher:
 
         # Config for this subcommand (claude, codex, shell)
         subcommand_config = SUBCOMMAND_CONFIG[args.cmd]
-
-        if subcommand_config.get("require_aws_profile"):
-            if not args.aws_profile:
-                print(
-                    f"Error: --aws-profile is required for {args.cmd}.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-
         env_vars = self.build_env_vars(subcommand_config)
-        mounts = self.build_mounts(subcommand_config)
+
+        if self._bedrock_enabled(env_vars) and not env_vars.get("AWS_PROFILE"):
+            fatal(
+                f"AWS_PROFILE must be set for {args.cmd} when "
+                "CLAUDE_CODE_USE_BEDROCK=1. Inherit it from the host or pass "
+                "--env AWS_PROFILE=..."
+            )
+
+        mounts = self.build_mounts(subcommand_config, env_vars)
 
         # Build command args (subcommand command + any tool args from command line)
         # Special handling for shell: if args provided, use -c to execute them
@@ -620,18 +627,6 @@ def build_parser():
         help="Override workspace path inside the container (default: same as host cwd)",
     )
 
-    # AWS configuration
-    parser.add_argument(
-        "--aws-region",
-        default=os.environ.get("AWS_REGION", "us-east-1"),
-        help="AWS region for Claude (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--aws-profile",
-        default=os.environ.get("AWS_PROFILE"),
-        help="AWS profile for Claude (default: %(default)s)",
-    )
-
     # Path configuration
     parser.add_argument(
         "--path-prepend",
@@ -692,7 +687,7 @@ def build_parser():
 
     subparsers.add_parser(
         "claude",
-        help="Run claude in the container (requires --aws-profile)",
+        help="Run claude in the container",
     )
 
     return parser
