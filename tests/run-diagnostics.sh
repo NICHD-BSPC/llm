@@ -37,7 +37,7 @@ print_warning() {
 
 usage() {
     cat <<EOF
-Usage: $0 [options] <mode> [backend] [aws-profile]
+Usage: $0 [options] <mode> [backend]
 
 Modes:
   shell   - Run diagnostics directly in shell
@@ -56,17 +56,16 @@ Options:
 
 Arguments:
   backend        podman (default) or singularity
-  aws-profile    AWS profile (default: from environment)
 
 Examples:
   # Run shell diagnostics with podman
   $0 shell
 
-  # Run Claude diagnostics with custom env var
-  $0 -e TEST_VAR=hello claude podman my-aws-profile
+  # Run Claude diagnostics with Bedrock enabled explicitly
+  $0 -e CLAUDE_CODE_USE_BEDROCK=1 -e AWS_PROFILE=my-aws-profile claude podman
 
   # Run all diagnostics with singularity
-  $0 all singularity my-aws-profile
+  $0 -e CLAUDE_CODE_USE_BEDROCK=1 -e AWS_PROFILE=my-aws-profile all singularity
 EOF
     exit 0
 }
@@ -108,13 +107,6 @@ fi
 
 MODE="$1"
 BACKEND="${2:-podman}"
-AWS_PROFILE="${3:-}"
-
-# Build AWS profile arg if provided
-AWS_ARGS=()
-if [[ -n "$AWS_PROFILE" ]]; then
-    AWS_ARGS+=(--aws-profile "$AWS_PROFILE")
-fi
 
 run_shell_diagnostics() {
     print_header "Shell Mode: Direct Diagnostics"
@@ -157,12 +149,6 @@ Please run: bash tests/container-diagnostics.sh"
 run_claude_diagnostics() {
     print_header "Claude Mode: AI-Assisted Diagnostics"
 
-    if [[ -z "$AWS_PROFILE" ]]; then
-        echo "Error: AWS profile required for Claude mode"
-        echo "Usage: $0 claude [backend] <aws-profile>"
-        exit 1
-    fi
-
     print_warning "This will launch Claude and ask it to run diagnostics."
     print_warning "Press Ctrl-C to cancel, or Enter to continue..."
     read -r
@@ -181,7 +167,6 @@ Please run: bash tests/container-diagnostics.sh"
     python "$LAUNCH_PY" \
         --backend "$BACKEND" \
         ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"} \
-        ${AWS_ARGS[@]+"${AWS_ARGS[@]}"} \
         ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
         claude --allowedTools 'Bash()' \
         -p "$prompt"
