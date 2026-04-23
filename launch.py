@@ -82,7 +82,7 @@ CERT_FILE_ENV_VARS = (
 )
 
 DEFAULT_PODMAN_IMAGE = "ghcr.io/nichd-bspc/llm"
-DEFAULT_SINGULARITY_IMAGE = "ghcr.io/nichd-bspc/llm-sif"
+DEFAULT_SINGULARITY_IMAGE = "oras://ghcr.io/nichd-bspc/llm-sif"
 
 
 class Backend:
@@ -193,6 +193,8 @@ class SingularityBackend(Backend):
 
     def validate_image(self):
         """Check that the singularity .sif file exists."""
+        if self.args.sif_path.startswith('oras://'):
+            return
         sif_path = Path(self.args.sif_path)
         if not sif_path.exists():
             print(
@@ -701,12 +703,6 @@ def parse_args(argv):
 
     # All subcommands forward extra arguments
     args.tool_args = remainder
-
-    # Resolve --sif-path relative to this script if it's a relative path
-    sif_path = Path(args.sif_path)
-    if not sif_path.is_absolute():
-        script_dir = Path(__file__).resolve().parent
-        args.sif_path = str(script_dir / sif_path)
 
     return args
 
