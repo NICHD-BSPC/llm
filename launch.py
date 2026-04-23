@@ -67,14 +67,13 @@ SUBCOMMAND_CONFIG = {
     },
 }
 
-# If certs provided, mount them here inside the container
-CONTAINER_CERTS_PATH = "/home/devuser/.local/share/llm-devcontainer/certs/cert.pem"
+# If certs provided, mount them here inside the container.
+CONTAINER_CERTS_PATH = "/tmp/llm-devcontainer-cert.pem"
 
 # The various env vars tools might look at for additional certs. We'll add them
 # all to the container to cover all the bases.
-CERT_ENV_VARS = (
+CERT_FILE_ENV_VARS = (
     "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
     "GIT_SSL_CAINFO",
     "AWS_CA_BUNDLE",
     "REQUESTS_CA_BUNDLE",
@@ -397,7 +396,7 @@ class Launcher:
             env["AWS_PROFILE"] = args.aws_profile or ""
 
         if args.certs:
-            for var_name in CERT_ENV_VARS:
+            for var_name in CERT_FILE_ENV_VARS:
                 env[var_name] = CONTAINER_CERTS_PATH
 
         # Add user-provided env vars (these come last)
