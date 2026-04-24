@@ -287,9 +287,15 @@ class Launcher:
         (local_dir / "bin").mkdir(parents=True, exist_ok=True)
 
     def setup_claude_config(self):
-        """Create default ~/.claude.json if it doesn't exist to prevent Claude Code from hanging."""
+        """Create default ~/.claude.json and ~/.claude/ if needed to prevent Claude Code from hanging."""
         if self.args.cmd != "claude":
             return
+
+        claude_dir = Path.home() / ".claude"
+        if not claude_dir.exists():
+            claude_dir.mkdir(parents=True, exist_ok=True)
+            if self.args.verbose:
+                LOGGER.info("Created directory: %s", claude_dir)
 
         claude_config = Path.home() / ".claude.json"
         if not claude_config.exists():
