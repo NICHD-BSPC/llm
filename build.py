@@ -16,13 +16,12 @@ CONTAINER_USERNAME = "devuser"
 DEFAULT_REMOTE_TAR_NAME = "img.tar"
 DEFAULT_REMOTE_LAUNCHER_NAME = "launch.py"
 DEFAULT_REMOTE_SIF_NAME = "llm.sif"
-DRY_RUN = False
 
 
-def run(cmd, cwd=None):
+def run(cmd, cwd=None, dry_run=False):
     "Print the command in cyan and then run it"
     print(f"\033[36m$ {shlex.join(cmd)}\033[0m")
-    if DRY_RUN:
+    if dry_run:
         return
     subprocess.run(cmd, check=True, cwd=cwd)
 
@@ -72,7 +71,7 @@ def resolve_publish_paths(remote_path, remote_tar, remote_launcher, remote_sif):
     return resolved_tar, resolved_launcher, resolved_sif
 
 
-def build_image(image_name, arch, *args, certs_path=None):
+def build_image(image_name, arch, *args, certs_path=None, dry_run=False):
     "Build podman image"
 
     cmd = [
@@ -98,10 +97,10 @@ def build_image(image_name, arch, *args, certs_path=None):
             *args,
         ]
     )
-    run(cmd)
+    run(cmd, dry_run=dry_run)
 
 
-def save_image(image_name, tar_path):
+def save_image(image_name, tar_path, dry_run=False):
     """
     Save podman image as a tar file so it can be transferred to the remote
     and converted to singularity
@@ -115,7 +114,8 @@ def save_image(image_name, tar_path):
             "--format",
             "docker-archive",
             image_name,
-        ]
+        ],
+        dry_run=dry_run,
     )
 
 
@@ -124,6 +124,8 @@ def push_artifacts(
     local_tar,
     remote_tar,
     remote_launcher,
+    *,
+    dry_run=False,
 ):
     """
     Push locally saved tar to remote, along with launcher script
@@ -133,8 +135,11 @@ def push_artifacts(
         shlex.quote(str(remote_tar.parent)),
         shlex.quote(str(remote_launcher.parent)),
     )
-    run(["ssh", remote, mkdir_cmd])
-    run(["rsync", "-av", "--progress", str(local_tar), f"{remote}:{remote_tar}"])
+    run(["ssh", remote, mkdir_cmd], dry_run=dry_run)
+    run(
+        ["rsync", "-av", "--progress", str(local_tar), f"{remote}:{remote_tar}"],
+        dry_run=dry_run,
+    )
     run(
         [
             "rsync",
@@ -142,7 +147,8 @@ def push_artifacts(
             "--progress",
             str(REPO_ROOT / "launch.py"),
             f"{remote}:{remote_launcher}",
-        ]
+        ],
+        dry_run=dry_run,
     )
 
 
@@ -153,6 +159,7 @@ def build_remote_sif(
     *,
     force=False,
     tmpdir=None,
+    dry_run=False,
 ):
     """
     After transferring, use singularity on the remote to convert the
@@ -174,7 +181,7 @@ def build_remote_sif(
     build_cmd = shlex.join(build_cmd_parts)
     if tmpdir:
         build_cmd = f"TMPDIR={shlex.quote(str(tmpdir))} {build_cmd}"
-    run(["ssh", remote, build_cmd])
+    run(["ssh", remote, build_cmd], dry_run=dry_run)
 
 
 def build_parser():
@@ -289,9 +296,7 @@ def build_parser():
 
 
 def main(argv=None):
-    global DRY_RUN
     args = build_parser().parse_args(argv)
-    DRY_RUN = args.dry_run
     no_cache_args = ["--no-cache"] if getattr(args, "no_cache", False) else []
 
     if args.cmd == "build":
@@ -300,12 +305,13 @@ def main(argv=None):
             args.arch,
             *no_cache_args,
             certs_path=args.certs,
+            dry_run=args.dry_run,
         )
         return 0
 
     if args.cmd == "publish":
         local_tar = args.local_tar.expanduser()
-        if not DRY_RUN:
+        if not args.dry_run:
             result = subprocess.run(
                 ["ssh-add", "-l"],
                 capture_output=True,
@@ -316,8 +322,8 @@ def main(argv=None):
                     "Start it with: eval $(ssh-agent) && ssh-add"
                 )
         else:
-            run(["ssh-add", "-l"])
-        remote = resolve_remote(getattr(args, "remote", None))
+            run(["ssh-add", "-l"], dry_run=True)
+        remote = resolve_remote(args.remote)
         remote_tar, remote_launcher, remote_sif = resolve_publish_paths(
             args.remote_path,
             args.remote_tar,
@@ -329,16 +335,24 @@ def main(argv=None):
             args.arch,
             *no_cache_args,
             certs_path=args.certs,
+            dry_run=args.dry_run,
         )
         print(f"Saving image {args.image_name} to {local_tar} ...")
-        save_image(args.image_name, local_tar)
-        push_artifacts(remote, local_tar, remote_tar, remote_launcher)
+        save_image(args.image_name, local_tar, dry_run=args.dry_run)
+        push_artifacts(
+            remote,
+            local_tar,
+            remote_tar,
+            remote_launcher,
+            dry_run=args.dry_run,
+        )
         build_remote_sif(
             remote,
             remote_tar,
             remote_sif,
             force=args.force,
             tmpdir=args.tmpdir,
+            dry_run=args.dry_run,
         )
         return 0
 
