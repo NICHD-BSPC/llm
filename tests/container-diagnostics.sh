@@ -51,6 +51,12 @@ else
     echo "✗ ~/.claude does not exist"
 fi
 
+if [ -d ~/.pi ]; then
+    echo "✓ ~/.pi exists"
+else
+    echo "✗ ~/.pi does not exist"
+fi
+
 if [ -f ~/.claude.json ]; then
     echo "✓ ~/.claude.json exists"
 else
