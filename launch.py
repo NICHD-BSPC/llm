@@ -287,6 +287,14 @@ class Launcher:
                 fatal(f"--certs must point to a file, got: {args.certs}")
             args.certs = str(certs_path)
 
+        if args.path_prepend and PurePosixPath(args.path_prepend).is_absolute():
+            if not self._container_path_is_mounted(args.path_prepend):
+                fatal(
+                    f"--path-prepend path '{args.path_prepend}' is absolute but is "
+                    "not available in the container. Add a matching --mount or "
+                    "use a workspace-relative path."
+                )
+
     def setup_host_paths(self):
         """Create necessary host directories before launch."""
         local_dir = Path(self.args.container_local_host_dir).expanduser()
@@ -333,6 +341,47 @@ class Launcher:
             # Outside workspace - use absolute path
             return f"{conda_path}/bin"
 
+    def _static_mounts(self):
+        """Return mounts known before runtime env calculation."""
+        args = self.args
+        host_cwd = os.getcwd()
+        container_workspace = args.workspace_mount or host_cwd
+
+        mounts = [
+            (
+                str(Path(args.container_local_host_dir).expanduser()),
+                "/home/devuser/.local",
+            ),
+            (host_cwd, container_workspace),
+        ]
+
+        for mount_spec in args.mount:
+            mounts.append(self._parse_mount_spec(mount_spec))
+
+        if args.conda_env:
+            conda_path = args.conda_env
+            if not self._is_path_inside_workspace(conda_path, host_cwd):
+                mounts.append((conda_path, conda_path))
+
+        if args.certs:
+            mounts.append((args.certs, CONTAINER_CERTS_PATH))
+
+        return self._normalize_mounts(mounts)
+
+    def _container_path_is_mounted(self, container_path):
+        """Return True when a container path is reachable via the mount set."""
+        target = PurePosixPath(container_path)
+        for _, mount_target in self._static_mounts():
+            mount_path = PurePosixPath(mount_target)
+            if target == mount_path:
+                return True
+            try:
+                target.relative_to(mount_path)
+                return True
+            except ValueError:
+                continue
+        return False
+
     def build_path(self):
         """
         Construct the container PATH environment variable based on command-line
@@ -357,7 +406,12 @@ class Launcher:
 
         # Add path-prepend if specified
         if args.path_prepend:
-            path = f"{container_workspace}/{args.path_prepend}:{path}"
+            path_prepend = PurePosixPath(args.path_prepend)
+            if path_prepend.is_absolute():
+                prepend_path = str(path_prepend)
+            else:
+                prepend_path = str(PurePosixPath(container_workspace) / path_prepend)
+            path = f"{prepend_path}:{path}"
 
         # Add conda env if specified (takes highest precedence)
         if args.conda_env:
@@ -433,36 +487,8 @@ class Launcher:
 
     def build_mounts(self, subcommand_config, env_vars=None):
         """Build all mounts for the container."""
-        args = self.args
-        host_cwd = os.getcwd()
-        container_workspace = args.workspace_mount or host_cwd
+        mounts = list(self._static_mounts())
 
-        # Configure mounts as (host_path, container_path) tuples
-        mounts = [
-            # Container's .local directory
-            (
-                str(Path(args.container_local_host_dir).expanduser()),
-                "/home/devuser/.local",
-            ),
-            # Workspace
-            (host_cwd, container_workspace),
-        ]
-
-        # Add user-provided mounts
-        for mount_spec in args.mount:
-            host_path, container_path = self._parse_mount_spec(mount_spec)
-            mounts.append((host_path, container_path))
-
-        # Add conda env mount if needed (and outside workspace)
-        if args.conda_env:
-            conda_path = args.conda_env
-            if not self._is_path_inside_workspace(conda_path, host_cwd):
-                mounts.append((conda_path, conda_path))
-
-        if args.certs:
-            mounts.append((args.certs, CONTAINER_CERTS_PATH))
-
-        # Add credential mounts
         for tool in subcommand_config["credentials"]:
             mounts.extend(self._credential_mounts(tool))
 
