@@ -580,6 +580,12 @@ class Launcher:
         Only returns paths that actually exist on the host.
         """
         mounts = []
+        if tool not in CREDENTIAL_PATHS:
+            known_tools = ", ".join(sorted(CREDENTIAL_PATHS))
+            fatal(
+                f"unknown credential config '{tool}'. "
+                f"Known credential configs: {known_tools}."
+            )
         paths = CREDENTIAL_PATHS[tool]
 
         for path_str in paths:
