@@ -52,6 +52,8 @@ Options:
                  Override podman image name passed to launch.py
   --sif-path PATH
                  Override singularity image path passed to launch.py
+  --non-interactive
+                 Skip confirmation prompts
   --help         Show this help
 
 Arguments:
@@ -73,6 +75,7 @@ EOF
 # Parse options
 EXTRA_ARGS=()
 LAUNCH_ARGS=()
+NON_INTERACTIVE=0
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help)
@@ -94,6 +97,10 @@ while [[ $# -gt 0 ]]; do
             LAUNCH_ARGS+=(--sif-path "$2")
             shift 2
             ;;
+        --non-interactive)
+            NON_INTERACTIVE=1
+            shift
+            ;;
         *)
             break
             ;;
@@ -107,6 +114,13 @@ fi
 
 MODE="$1"
 BACKEND="${2:-podman}"
+
+wait_for_continue() {
+    if [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+        return
+    fi
+    read -r
+}
 
 run_shell_diagnostics() {
     print_header "Shell Mode: Direct Diagnostics"
@@ -125,7 +139,7 @@ run_codex_diagnostics() {
     print_header "Codex Mode: AI-Assisted Diagnostics"
     print_warning "This will launch Codex and ask it to run diagnostics."
     print_warning "Press Ctrl-C to cancel, or Enter to continue..."
-    read -r
+    wait_for_continue
     echo ""
 
     local prompt="Please run the script located at tests/container-diagnostics.sh and provide a summary of the results. Specifically report:
@@ -151,7 +165,7 @@ run_claude_diagnostics() {
 
     print_warning "This will launch Claude and ask it to run diagnostics."
     print_warning "Press Ctrl-C to cancel, or Enter to continue..."
-    read -r
+    wait_for_continue
     echo ""
 
     local prompt="Please run the script located at tests/container-diagnostics.sh and provide a summary of the results. Specifically report:
@@ -186,11 +200,11 @@ case "$MODE" in
         run_shell_diagnostics
         echo ""
         print_info "Shell diagnostics complete. Press Enter to continue to Codex..."
-        read -r
+        wait_for_continue
         run_codex_diagnostics
         echo ""
         print_info "Codex diagnostics complete. Press Enter to continue to Claude..."
-        read -r
+        wait_for_continue
         run_claude_diagnostics
         ;;
     *)
