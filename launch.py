@@ -73,6 +73,7 @@ DEFAULT_PODMAN_IMAGE = "ghcr.io/nichd-bspc/llm"
 DEFAULT_SINGULARITY_IMAGE = "oras://ghcr.io/nichd-bspc/llm-sif"
 DEFAULT_CERTS_ENV_VAR = "LLM_DEVCONTAINER_CERTS"
 LOGGER = logging.getLogger("launch")
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 def configure_logging(verbose=False):
@@ -251,6 +252,12 @@ class Launcher:
         """Validate command-line arguments."""
 
         args = self.args  # for convenience in this method...
+
+        if args.sif_path and not args.sif_path.startswith("oras://"):
+            sif_path = Path(args.sif_path).expanduser()
+            if not sif_path.is_absolute():
+                sif_path = SCRIPT_DIR / sif_path
+            args.sif_path = str(sif_path.resolve())
 
         # a relative --workspace-mount doesn't make sense (what would it be relative to?)
         if args.workspace_mount and not Path(args.workspace_mount).is_absolute():
