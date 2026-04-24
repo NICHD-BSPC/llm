@@ -442,6 +442,13 @@ class Launcher:
             key: value for key, value in os.environ.items() if key.startswith(prefix)
         }
 
+    def _host_env_with_prefixes(self, *prefixes):
+        """Return host env vars matching any of the provided prefixes."""
+        env = {}
+        for prefix in prefixes:
+            env.update(self._host_env_with_prefix(prefix))
+        return env
+
     def _bedrock_enabled(self, env):
         """Return True when the effective env enables Claude Bedrock."""
         return env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
@@ -466,7 +473,7 @@ class Launcher:
         env.update(subcommand_config["extra_env"])
 
         if self.args.cmd in {"claude", "shell"}:
-            env.update(self._host_env_with_prefix("CLAUDE_CODE"))
+            env.update(self._host_env_with_prefixes("CLAUDE_CODE", "ANTHROPIC_"))
 
         effective_env = dict(env)
 
@@ -630,9 +637,9 @@ class Launcher:
         """Main entry point for launching a container."""
         args = self.args
 
-        self.setup_host_paths()
-        self.setup_claude_config()
         if not args.dry_run:
+            self.setup_host_paths()
+            self.setup_claude_config()
             self.backend.check_availability()
             self.backend.validate_image()
 
@@ -652,7 +659,7 @@ class Launcher:
         # Build command args (subcommand command + any tool args from command line)
         # Special handling for shell: if args provided, use -c to execute them
         if args.cmd == "shell" and args.tool_args:
-            command_args = ["/bin/bash", "-c", " ".join(args.tool_args)]
+            command_args = ["/bin/bash", "-c", shlex.join(args.tool_args)]
         else:
             command_args = subcommand_config["command"] + args.tool_args
 
