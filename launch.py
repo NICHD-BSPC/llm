@@ -41,7 +41,7 @@ CREDENTIAL_PATHS = {
 SUBCOMMAND_CONFIG = {
     "shell": {
         "command": ["/bin/bash"],
-        "credentials": ["codex", "claude"],
+        "credentials": ["codex", "claude", "pi"],
     },
     "codex": {
         "command": ["codex", "--sandbox", "danger-full-access"],
@@ -640,8 +640,10 @@ class Launcher:
 
         if not args.dry_run:
             self.setup_host_paths()
-            if args.cmd == "claude":
+            if args.cmd in {"claude", "shell"}:
                 self.setup_claude_config()
+            if args.cmd in {"pi", "shell"}:
+                self.setup_pi_config()
             self.backend.check_availability()
             self.backend.validate_image()
 
