@@ -6,6 +6,8 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 ARG DEBIAN_FRONTEND=noninteractive
 ARG NODE_VERSION=22.22.2
+ARG TARGETARCH
+ARG TARGETPLATFORM
 
 RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
     APT_HTTPS_OPTS="$(if [ -f /run/secrets/mitm_ca_bundle.pem ]; then printf '%s' '-o Acquire::https::CaInfo=/run/secrets/mitm_ca_bundle.pem'; fi)" && \
@@ -42,8 +44,7 @@ RUN groupadd -o --gid "${USER_GID}" "${USERNAME}" && \
     chmod 0440 "/etc/sudoers.d/${USERNAME}"
 
 # Detect architecture once and store mappings for later RUN commands
-RUN ARCH="$(dpkg --print-architecture)" && \
-  case "${ARCH}" in \
+RUN case "${TARGETARCH}" in \
     amd64) \
       echo 'AWS_ARCH=x86_64' >> /etc/arch.env && \
       echo 'CLAUDE_PLATFORM=linux-x64' >> /etc/arch.env && \
@@ -56,7 +57,7 @@ RUN ARCH="$(dpkg --print-architecture)" && \
       echo 'CODEX_ASSET=codex-aarch64-unknown-linux-musl.tar.gz' >> /etc/arch.env && \
       echo 'CODEX_BINARY=codex-aarch64-unknown-linux-musl' >> /etc/arch.env && \
       echo 'NODE_ARCH=arm64' >> /etc/arch.env ;; \
-    *) echo "Unsupported architecture: ${ARCH}" >&2; exit 1 ;; \
+    *) echo "Unsupported architecture: ${TARGETPLATFORM}/${TARGETARCH}" >&2; exit 1 ;; \
   esac
 
 # Install Node.js from the official upstream tarball.
