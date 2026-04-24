@@ -55,6 +55,8 @@ class LaunchTests(unittest.TestCase):
                 with mock.patch.dict(
                     os.environ,
                     {
+                        "ANTHROPIC_API_KEY": "host-anthropic-key",
+                        "ANTHROPIC_BASE_URL": "https://example.anthropic.test",
                         "AWS_PROFILE": "host-profile",
                         "AWS_REGION": "host-region",
                         "AWS_SECRET_ACCESS_KEY": "host-secret",
@@ -73,6 +75,11 @@ class LaunchTests(unittest.TestCase):
                     env = launcher.build_env_vars(subcommand_config)
                     mounts = launcher.build_mounts(subcommand_config, env)
 
+                    self.assertEqual(env["ANTHROPIC_API_KEY"], "host-anthropic-key")
+                    self.assertEqual(
+                        env["ANTHROPIC_BASE_URL"],
+                        "https://example.anthropic.test",
+                    )
                     self.assertEqual(env["CLAUDE_CODE_NO_FLICKER"], "1")
                     self.assertNotIn("CLAUDE_CODE_USE_BEDROCK", env)
                     self.assertNotIn("AWS_PROFILE", env)
@@ -88,6 +95,7 @@ class LaunchTests(unittest.TestCase):
                 with mock.patch.dict(
                     os.environ,
                     {
+                        "ANTHROPIC_API_KEY": "host-anthropic-key",
                         "CLAUDE_CODE_USE_BEDROCK": "1",
                         "CLAUDE_CODE_DISABLE_AUTOUPDATER": "1",
                         "AWS_PROFILE": "host-profile",
@@ -105,6 +113,7 @@ class LaunchTests(unittest.TestCase):
                     env = launcher.build_env_vars(subcommand_config)
                     mounts = launcher.build_mounts(subcommand_config, env)
 
+                    self.assertEqual(env["ANTHROPIC_API_KEY"], "host-anthropic-key")
                     self.assertEqual(env["CLAUDE_CODE_USE_BEDROCK"], "1")
                     self.assertEqual(env["CLAUDE_CODE_DISABLE_AUTOUPDATER"], "1")
                     self.assertEqual(env["AWS_PROFILE"], "host-profile")
@@ -118,6 +127,7 @@ class LaunchTests(unittest.TestCase):
         with mock.patch.dict(
             os.environ,
             {
+                "ANTHROPIC_API_KEY": "host-anthropic-key",
                 "AWS_PROFILE": "host-profile",
                 "AWS_REGION": "host-region",
                 "AWS_SECRET_ACCESS_KEY": "host-secret",
@@ -134,6 +144,8 @@ class LaunchTests(unittest.TestCase):
                     "AWS_PROFILE=override-profile",
                     "--env",
                     "AWS_REGION=override-region",
+                    "--env",
+                    "ANTHROPIC_API_KEY=override-anthropic-key",
                     "shell",
                 ]
             )
@@ -142,6 +154,7 @@ class LaunchTests(unittest.TestCase):
             env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["shell"])
             mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["shell"], env)
 
+            self.assertEqual(env["ANTHROPIC_API_KEY"], "override-anthropic-key")
             self.assertEqual(env["CLAUDE_CODE_USE_BEDROCK"], "1")
             self.assertEqual(env["AWS_PROFILE"], "override-profile")
             self.assertEqual(env["AWS_REGION"], "override-region")
@@ -199,10 +212,26 @@ class LaunchTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             launcher.run()
 
+    def test_dry_run_does_not_create_host_state(self):
+        launcher = self.make_launcher(["claude"])
+
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertFalse((self.home / ".claude.json").exists())
+        self.assertFalse(self.container_local.exists())
+
+        with redirect_stdout(io.StringIO()) as stdout:
+            launcher.run()
+
+        self.assertIn("claude", stdout.getvalue())
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertFalse((self.home / ".claude.json").exists())
+        self.assertFalse(self.container_local.exists())
+
     def test_codex_does_not_inherit_claude_or_aws_env(self):
         with mock.patch.dict(
             os.environ,
             {
+                "ANTHROPIC_API_KEY": "host-anthropic-key",
                 "CLAUDE_CODE_USE_BEDROCK": "1",
                 "CLAUDE_CODE_NO_FLICKER": "1",
                 "AWS_PROFILE": "host-profile",
@@ -216,6 +245,7 @@ class LaunchTests(unittest.TestCase):
             env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["codex"])
             mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["codex"], env)
 
+            self.assertNotIn("ANTHROPIC_API_KEY", env)
             self.assertNotIn("CLAUDE_CODE_USE_BEDROCK", env)
             self.assertNotIn("CLAUDE_CODE_NO_FLICKER", env)
             self.assertNotIn("AWS_PROFILE", env)
@@ -264,6 +294,86 @@ class LaunchTests(unittest.TestCase):
             self.assert_mount_missing(
                 mounts, default_certs.resolve(), launch.CONTAINER_CERTS_PATH
             )
+
+    def test_relative_sif_path_resolves_relative_to_script_dir(self):
+        fake_script_dir = self.tmp_path / "launcher-dir"
+        fake_script_dir.mkdir()
+        fake_script = fake_script_dir / "launch.py"
+        fake_script.write_text("# stub\n")
+        sif_path = fake_script_dir / "local.sif"
+        sif_path.write_text("sif")
+
+        with mock.patch.object(launch, "__file__", str(fake_script)):
+            with mock.patch.object(launch, "SCRIPT_DIR", fake_script_dir):
+                launcher = self.make_launcher(
+                    ["--backend", "singularity", "--sif-path", "local.sif", "codex"]
+                )
+
+        self.assertEqual(launcher.args.sif_path, str(sif_path.resolve()))
+
+    def test_oras_sif_path_is_preserved(self):
+        launcher = self.make_launcher(
+            [
+                "--backend",
+                "singularity",
+                "--sif-path",
+                "oras://example.invalid/image",
+                "codex",
+            ]
+        )
+
+        self.assertEqual(launcher.args.sif_path, "oras://example.invalid/image")
+
+    def test_relative_path_prepend_uses_workspace_mount(self):
+        launcher = self.make_launcher(
+            [
+                "--workspace-mount",
+                "/workspace",
+                "--path-prepend",
+                "custom/bin",
+                "codex",
+            ]
+        )
+
+        env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["codex"])
+
+        self.assertTrue(env["PATH"].startswith("/workspace/custom/bin:"))
+
+    def test_absolute_path_prepend_allowed_when_explicit_mount_covers_it(self):
+        tools_dir = self.tmp_path / "tools"
+        tools_dir.mkdir()
+        launcher = self.make_launcher(
+            [
+                "--mount",
+                f"{tools_dir}:/opt/tools",
+                "--path-prepend",
+                "/opt/tools/bin",
+                "codex",
+            ]
+        )
+
+        env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["codex"])
+
+        self.assertTrue(env["PATH"].startswith("/opt/tools/bin:"))
+
+    def test_absolute_path_prepend_allowed_when_workspace_mount_covers_it(self):
+        launcher = self.make_launcher(
+            [
+                "--workspace-mount",
+                "/workspace",
+                "--path-prepend",
+                "/workspace/custom/bin",
+                "codex",
+            ]
+        )
+
+        env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["codex"])
+
+        self.assertTrue(env["PATH"].startswith("/workspace/custom/bin:"))
+
+    def test_absolute_path_prepend_rejected_without_covering_mount(self):
+        with self.assertRaises(SystemExit):
+            self.make_launcher(["--path-prepend", "/opt/tools/bin", "codex"])
 
     def test_warns_when_host_mount_nests_inside_existing_mount(self):
         launcher = self.make_launcher(
