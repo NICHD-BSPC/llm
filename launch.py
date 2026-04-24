@@ -210,9 +210,9 @@ class SingularityBackend(Backend):
     def build_command(self, env_vars, mounts, command_args):
         args = self.args
 
-        env_vars = dict(env_vars)
-        home_dir = env_vars.pop("HOME", None)
-        env_args = self.build_env_args(env_vars)
+        container_env = dict(env_vars)
+        home_dir = container_env.pop("HOME", None)
+        env_args = self.build_env_args(container_env)
         mount_args = self.build_mount_args(mounts)
         home_arg = []
 
