@@ -763,36 +763,27 @@ def build_parser():
         help="Show verbose output including credential mount status",
     )
 
-    # Subcommands
-    subparsers = parser.add_subparsers(dest="cmd", required=True)
-
-    subparsers.add_parser(
-        "shell",
-        help="Launch an interactive bash shell",
+    parser.add_argument(
+        "cmd",
+        choices=tuple(SUBCOMMAND_CONFIG),
+        help="Tool to run inside the container",
     )
-
-    subparsers.add_parser(
-        "codex",
-        help="Run codex in the container",
+    parser.add_argument(
+        "tool_args",
+        nargs=argparse.REMAINDER,
+        help=argparse.SUPPRESS,
     )
-
-    subparsers.add_parser(
-        "claude",
-        help="Run claude in the container",
-    )
-
-    subparsers.add_parser("pi", help="Run pi in the container")
 
     return parser
 
 
 def parse_args(argv):
     """Parse command-line arguments."""
-    parser = build_parser()
-    args, remainder = parser.parse_known_args(argv)
+    args = build_parser().parse_args(argv)
 
-    # All subcommands forward extra arguments
-    args.tool_args = remainder
+    # An optional separator can make the launcher/tool argument boundary clear.
+    if args.tool_args[:1] == ["--"]:
+        args.tool_args = args.tool_args[1:]
 
     return args
 
