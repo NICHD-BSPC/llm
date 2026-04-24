@@ -479,20 +479,17 @@ class Launcher:
         if self.args.cmd in {"claude", "pi"}:
             env.update(self._host_env_with_prefixes("PI_"))
 
-        effective_env = dict(env)
+        # Args on the command line win over launcher defaults and inherited
+        # tool-specific host env.
+        env.update(user_env)
 
-        # args on the command line win
-        effective_env.update(user_env)
-
-        if self._bedrock_enabled(effective_env):
-            env.update(self._host_env_with_prefix("AWS_"))
+        if self._bedrock_enabled(env):
+            for key, value in self._host_env_with_prefix("AWS_").items():
+                env.setdefault(key, value)
 
         if args.certs:
             for var_name in CERT_FILE_ENV_VARS:
-                env[var_name] = CONTAINER_CERTS_PATH
-
-        # Add user-provided env vars (these come last)
-        env.update(user_env)
+                env.setdefault(var_name, CONTAINER_CERTS_PATH)
 
         return env
 
