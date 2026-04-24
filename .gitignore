@@ -3,3 +3,4 @@ __pycache__/
 .pytest_cache/
 docs/_build/
 env-docs/
+certs.pem
