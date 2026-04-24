@@ -2,7 +2,7 @@ import io
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -72,7 +72,7 @@ class LaunchTests(unittest.TestCase):
                     self.touch(self.home / ".claude.json")
 
                     subcommand_config = launch.SUBCOMMAND_CONFIG[cmd]
-                    env = launcher.build_env_vars(subcommand_config)
+                    env = launcher.build_env_vars()
                     mounts = launcher.build_mounts(subcommand_config, env)
 
                     self.assertEqual(env["ANTHROPIC_API_KEY"], "host-anthropic-key")
@@ -110,7 +110,7 @@ class LaunchTests(unittest.TestCase):
                     self.touch(self.home / ".claude.json")
 
                     subcommand_config = launch.SUBCOMMAND_CONFIG[cmd]
-                    env = launcher.build_env_vars(subcommand_config)
+                    env = launcher.build_env_vars()
                     mounts = launcher.build_mounts(subcommand_config, env)
 
                     self.assertEqual(env["ANTHROPIC_API_KEY"], "host-anthropic-key")
@@ -122,6 +122,75 @@ class LaunchTests(unittest.TestCase):
                     self.assert_mount_present(
                         mounts, self.home / ".aws", "/home/devuser/.aws"
                     )
+
+    def test_pi_bedrock_host_env_enables_aws_passthrough_and_mounts(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PI_USE_BEDROCK": "1",
+                "AWS_PROFILE": "host-profile",
+                "AWS_REGION": "host-region",
+                "AWS_SECRET_ACCESS_KEY": "host-secret",
+            },
+            clear=False,
+        ):
+            launcher = self.make_launcher(["pi"])
+            (self.home / ".aws").mkdir(exist_ok=True)
+            (self.home / ".pi").mkdir(exist_ok=True)
+
+            env = launcher.build_env_vars()
+            mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["pi"], env)
+
+            self.assertEqual(env["PI_USE_BEDROCK"], "1")
+            self.assertEqual(env["AWS_PROFILE"], "host-profile")
+            self.assertEqual(env["AWS_REGION"], "host-region")
+            self.assertEqual(env["AWS_SECRET_ACCESS_KEY"], "host-secret")
+            self.assert_mount_present(mounts, self.home / ".aws", "/home/devuser/.aws")
+
+    def test_pi_does_not_inherit_claude_bedrock_flag(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CLAUDE_CODE_USE_BEDROCK": "1",
+                "AWS_PROFILE": "host-profile",
+                "AWS_REGION": "host-region",
+                "AWS_SECRET_ACCESS_KEY": "host-secret",
+            },
+            clear=False,
+        ):
+            launcher = self.make_launcher(["pi"])
+            (self.home / ".aws").mkdir(exist_ok=True)
+
+            env = launcher.build_env_vars()
+            mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["pi"], env)
+
+            self.assertNotIn("CLAUDE_CODE_USE_BEDROCK", env)
+            self.assertNotIn("AWS_PROFILE", env)
+            self.assertNotIn("AWS_REGION", env)
+            self.assertNotIn("AWS_SECRET_ACCESS_KEY", env)
+            self.assert_mount_missing(mounts, self.home / ".aws", "/home/devuser/.aws")
+
+    def test_pi_ignores_claude_bedrock_env_override(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AWS_PROFILE": "host-profile",
+                "AWS_REGION": "host-region",
+                "AWS_SECRET_ACCESS_KEY": "host-secret",
+            },
+            clear=False,
+        ):
+            launcher = self.make_launcher(["--env", "CLAUDE_CODE_USE_BEDROCK=1", "pi"])
+            (self.home / ".aws").mkdir(exist_ok=True)
+
+            env = launcher.build_env_vars()
+            mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["pi"], env)
+
+            self.assertEqual(env["CLAUDE_CODE_USE_BEDROCK"], "1")
+            self.assertNotIn("AWS_PROFILE", env)
+            self.assertNotIn("AWS_REGION", env)
+            self.assertNotIn("AWS_SECRET_ACCESS_KEY", env)
+            self.assert_mount_missing(mounts, self.home / ".aws", "/home/devuser/.aws")
 
     def test_env_override_can_enable_bedrock_and_override_aws_values(self):
         with mock.patch.dict(
@@ -151,7 +220,7 @@ class LaunchTests(unittest.TestCase):
             )
             (self.home / ".aws").mkdir(exist_ok=True)
 
-            env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["shell"])
+            env = launcher.build_env_vars()
             mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["shell"], env)
 
             self.assertEqual(env["ANTHROPIC_API_KEY"], "override-anthropic-key")
@@ -177,7 +246,7 @@ class LaunchTests(unittest.TestCase):
             )
             (self.home / ".aws").mkdir(exist_ok=True)
 
-            env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["shell"])
+            env = launcher.build_env_vars()
             mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["shell"], env)
 
             self.assertEqual(env["CLAUDE_CODE_USE_BEDROCK"], "0")
@@ -185,6 +254,15 @@ class LaunchTests(unittest.TestCase):
             self.assertNotIn("AWS_REGION", env)
             self.assertNotIn("AWS_SECRET_ACCESS_KEY", env)
             self.assert_mount_missing(mounts, self.home / ".aws", "/home/devuser/.aws")
+
+    def test_shell_mounts_pi_credentials_when_present(self):
+        launcher = self.make_launcher(["shell"])
+        (self.home / ".pi").mkdir(exist_ok=True)
+
+        env = launcher.build_env_vars()
+        mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["shell"], env)
+
+        self.assert_mount_present(mounts, self.home / ".pi", "/home/devuser/.pi")
 
     def test_claude_requires_aws_profile_env_only_when_bedrock_enabled(self):
         with mock.patch.dict(
@@ -242,7 +320,7 @@ class LaunchTests(unittest.TestCase):
             launcher = self.make_launcher(["codex"])
             (self.home / ".aws").mkdir(exist_ok=True)
 
-            env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["codex"])
+            env = launcher.build_env_vars()
             mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["codex"], env)
 
             self.assertNotIn("ANTHROPIC_API_KEY", env)
@@ -262,7 +340,7 @@ class LaunchTests(unittest.TestCase):
             clear=False,
         ):
             launcher = self.make_launcher(["codex"])
-            env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["codex"])
+            env = launcher.build_env_vars()
             mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["codex"], env)
 
             self.assertEqual(launcher.args.certs, str(certs_path.resolve()))
@@ -284,7 +362,7 @@ class LaunchTests(unittest.TestCase):
             clear=False,
         ):
             launcher = self.make_launcher(["--certs", str(override_certs), "codex"])
-            env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["codex"])
+            env = launcher.build_env_vars()
             mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["codex"], env)
 
             self.assertEqual(launcher.args.certs, str(override_certs.resolve()))
@@ -335,7 +413,7 @@ class LaunchTests(unittest.TestCase):
             ]
         )
 
-        env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["codex"])
+        env = launcher.build_env_vars()
 
         self.assertTrue(env["PATH"].startswith("/workspace/custom/bin:"))
 
@@ -352,7 +430,7 @@ class LaunchTests(unittest.TestCase):
             ]
         )
 
-        env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["codex"])
+        env = launcher.build_env_vars()
 
         self.assertTrue(env["PATH"].startswith("/opt/tools/bin:"))
 
@@ -367,7 +445,7 @@ class LaunchTests(unittest.TestCase):
             ]
         )
 
-        env = launcher.build_env_vars(launch.SUBCOMMAND_CONFIG["codex"])
+        env = launcher.build_env_vars()
 
         self.assertTrue(env["PATH"].startswith("/workspace/custom/bin:"))
 
@@ -375,19 +453,51 @@ class LaunchTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.make_launcher(["--path-prepend", "/opt/tools/bin", "codex"])
 
-    def test_warns_when_host_mount_nests_inside_existing_mount(self):
+    def test_invalid_mount_spec_rejected_during_launcher_validation(self):
+        stderr = io.StringIO()
+        with self.assertRaises(SystemExit):
+            with redirect_stderr(stderr):
+                self.make_launcher(["--mount", ":", "codex"])
+
+        self.assertIn("invalid mount specification ':'", stderr.getvalue())
+
+    def test_invalid_mount_spec_reported_before_path_prepend_coverage(self):
+        stderr = io.StringIO()
+        with self.assertRaises(SystemExit):
+            with redirect_stderr(stderr):
+                self.make_launcher(
+                    [
+                        "--mount",
+                        f"{self.tmp_path / 'tools'}:",
+                        "--path-prepend",
+                        "/opt/tools/bin",
+                        "codex",
+                    ]
+                )
+
+        output = stderr.getvalue()
+        self.assertIn("invalid mount specification", output)
+        self.assertNotIn("--path-prepend path", output)
+
+    def test_unknown_credential_config_fails_with_clear_message(self):
+        launcher = self.make_launcher(["codex"])
+
+        with self.assertRaises(SystemExit):
+            with self.assertLogs(launch.LOGGER, level="ERROR") as logs:
+                launcher._credential_mounts("typo")
+
+        output = "\n".join(logs.output)
+        self.assertIn("unknown credential config 'typo'", output)
+        self.assertIn("codex", output)
+
+    def test_does_not_warn_when_only_host_mount_nests_inside_existing_mount(self):
         launcher = self.make_launcher(
             ["--mount", str(self.home / ".codex" / "files"), "codex"]
         )
         (self.home / ".codex" / "files").mkdir(parents=True)
 
-        with self.assertLogs(launch.LOGGER, level="WARNING") as logs:
+        with self.assertNoLogs(launch.LOGGER, level="WARNING"):
             launcher.build_mounts(launch.SUBCOMMAND_CONFIG["codex"])
-
-        output = "\n".join(logs.output)
-        self.assertIn("nested mounts detected", output)
-        self.assertIn(str(self.home / ".codex"), output)
-        self.assertIn(str(self.home / ".codex" / "files"), output)
 
     def test_warns_when_container_mount_nests_inside_existing_mount(self):
         external = self.tmp_path / "external"
@@ -405,7 +515,7 @@ class LaunchTests(unittest.TestCase):
         self.assertIn("/home/devuser/.codex", output)
         self.assertIn("/home/devuser/.codex/files", output)
 
-    def test_warns_when_default_mounts_conflict_with_each_other(self):
+    def test_does_not_warn_when_default_mount_host_paths_nest(self):
         nested_local = self.workspace / "container-local"
         launcher = launch.Launcher(
             launch.parse_args(
@@ -418,13 +528,8 @@ class LaunchTests(unittest.TestCase):
             )
         )
 
-        with self.assertLogs(launch.LOGGER, level="WARNING") as logs:
+        with self.assertNoLogs(launch.LOGGER, level="WARNING"):
             launcher.build_mounts(launch.SUBCOMMAND_CONFIG["codex"])
-
-        output = "\n".join(logs.output)
-        self.assertIn("nested mounts detected", output)
-        self.assertIn(str(self.workspace), output)
-        self.assertIn(str(nested_local), output)
 
     def test_verbose_logs_credential_mount_status(self):
         (self.home / ".codex").mkdir()
@@ -445,6 +550,36 @@ class LaunchTests(unittest.TestCase):
 
         output = "\n".join(logs.output)
         self.assertIn("INFO:launch:Mounting credential: ~/.codex", output)
+
+    def test_parse_args_rejects_unknown_launcher_option_before_subcommand(self):
+        with self.assertRaises(SystemExit):
+            with redirect_stderr(io.StringIO()):
+                launch.parse_args(["--dry_run", "codex"])
+
+    def test_parse_args_forwards_arguments_after_subcommand(self):
+        args = launch.parse_args(["--dry-run", "codex", "--model", "gpt-5", "hi"])
+
+        self.assertTrue(args.dry_run)
+        self.assertEqual(args.cmd, "codex")
+        self.assertEqual(args.tool_args, ["--model", "gpt-5", "hi"])
+
+    def test_parse_args_treats_launcher_options_after_subcommand_as_tool_args(self):
+        args = launch.parse_args(["codex", "--dry-run"])
+
+        self.assertFalse(args.dry_run)
+        self.assertEqual(args.tool_args, ["--dry-run"])
+
+    def test_parse_args_accepts_optional_separator_before_tool_args(self):
+        args = launch.parse_args(["codex", "--", "--model", "gpt-5"])
+
+        self.assertEqual(args.tool_args, ["--model", "gpt-5"])
+
+    def test_parse_args_handles_subcommand_name_as_launcher_option_value(self):
+        args = launch.parse_args(["--image-name", "codex", "codex", "--help"])
+
+        self.assertEqual(args.image_name, "codex")
+        self.assertEqual(args.cmd, "codex")
+        self.assertEqual(args.tool_args, ["--help"])
 
 
 if __name__ == "__main__":
