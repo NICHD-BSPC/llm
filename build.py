@@ -41,34 +41,11 @@ def resolve_remote(target):
 def resolve_publish_paths(remote_path, remote_tar, remote_launcher, remote_sif):
     "Resolve remote artifact locations for the publish subcommand."
     # These are remote paths, so keep "~" intact for the remote shell/user.
-    base = remote_path if remote_path else None
-
-    resolved_tar = remote_tar if remote_tar else None
-    resolved_launcher = remote_launcher if remote_launcher else None
-    resolved_sif = remote_sif if remote_sif else None
-
-    if base:
-        resolved_tar = resolved_tar or (base / DEFAULT_REMOTE_TAR_NAME)
-        resolved_launcher = resolved_launcher or (base / DEFAULT_REMOTE_LAUNCHER_NAME)
-        resolved_sif = resolved_sif or (base / DEFAULT_REMOTE_SIF_NAME)
-
-    missing = []
-    if resolved_tar is None:
-        missing.append("--remote-tar")
-    if resolved_launcher is None:
-        missing.append("--remote-launcher")
-    if resolved_sif is None:
-        missing.append("--remote-sif")
-
-    if missing:
-        raise SystemExit(
-            "Missing remote publish path(s): {}. Pass --remote-path to use default "
-            "filenames in a remote directory, or provide the explicit path arguments.".format(
-                ", ".join(missing)
-            )
-        )
-
-    return resolved_tar, resolved_launcher, resolved_sif
+    return (
+        remote_tar or (remote_path / DEFAULT_REMOTE_TAR_NAME),
+        remote_launcher or (remote_path / DEFAULT_REMOTE_LAUNCHER_NAME),
+        remote_sif or (remote_path / DEFAULT_REMOTE_SIF_NAME),
+    )
 
 
 def build_image(image_name, arch, *args, certs_path=None, dry_run=False):
@@ -187,31 +164,37 @@ def build_remote_sif(
 def build_parser():
     """Create the command-line parser, split into "build" and "publish" subcommands"""
 
-    # Used by build and publish
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument(
+    parser = argparse.ArgumentParser(
+        description="Build, save, and publish the llm devcontainer image.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Environment:\n"
+            "  LLM_REMOTE           Optional fallback remote target when no host or user@host is passed."
+        ),
+    )
+    parser.add_argument(
         "--image-name",
         default=IMAGE_NAME,
         help="Container image name (default: %(default)s)",
     )
-    common.add_argument(
+    parser.add_argument(
         "--arch",
         default=ARCH,
         help="Container platform (default: %(default)s)",
     )
-    common.add_argument(
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         default=False,
         help="Don't use cache for podman build (useful to force update of agent harnesses)",
     )
-    common.add_argument(
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         default=False,
         help="Print commands without running them",
     )
-    common.add_argument(
+    parser.add_argument(
         "--certs",
         type=Path,
         default=None,
@@ -221,24 +204,12 @@ def build_parser():
         ),
     )
 
-
-    parser = argparse.ArgumentParser(
-        parents=[common],
-        description="Build, save, and publish the llm devcontainer image.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "Environment:\n"
-            "  LLM_REMOTE           Optional fallback remote target when no host or user@host is passed."
-        ),
-    )
-
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    build = sub.add_parser("build", parents=[common], help="Build the image")
+    build = sub.add_parser("build", help="Build the image")
 
     publish = sub.add_parser(
         "publish",
-        parents=[common],
         help="Build, save, and push artifacts to a remote host",
     )
     publish.add_argument(
@@ -297,7 +268,7 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    no_cache_args = ["--no-cache"] if getattr(args, "no_cache", False) else []
+    no_cache_args = ["--no-cache"] if args.no_cache else []
 
     if args.cmd == "build":
         build_image(
