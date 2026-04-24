@@ -321,6 +321,14 @@ class Launcher:
             if self.args.verbose:
                 LOGGER.info("Created default config: %s", claude_config)
 
+    def setup_pi_config(self):
+        """Create pi dirs if needed"""
+        pi_dir = Path.home() / ".pi"
+        if not pi_dir.exists():
+            pi_dir.mkdir(parents=True, exist_ok=True)
+            if self.args.verbose:
+                LOGGER.info("Created directory: %s", pi_dir)
+
     def _is_path_inside_workspace(self, path, host_cwd):
         """Check if a path is inside the workspace directory."""
         path_str = str(path)
