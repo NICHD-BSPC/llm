@@ -538,34 +538,25 @@ class Launcher:
         """Warn when one container mount target nests inside another."""
         for index, (host_path, container_path) in enumerate(mounts):
             for other_host_path, other_container_path in mounts[index + 1 :]:
-                nested_host = self._nested_path_pair(Path(host_path), Path(other_host_path))
                 nested_container = self._nested_path_pair(
                     PurePosixPath(container_path),
                     PurePosixPath(other_container_path),
                 )
 
-                if not nested_host and not nested_container:
+                if not nested_container:
                     continue
 
-                details = []
-                if nested_host:
-                    details.append(
-                        f"host paths '{nested_host[0]}' and '{nested_host[1]}'"
-                    )
-                if nested_container:
-                    details.append(
-                        f"container paths '{nested_container[0]}' and '{nested_container[1]}'"
-                    )
-
                 LOGGER.warning(
-                    "nested mounts detected between '%s:%s' and '%s:%s' (%s). "
+                    "nested mounts detected between '%s:%s' and '%s:%s' "
+                    "(container paths '%s' and '%s'). "
                     "Nested mounts can mask each other and cause confusing "
                     "container behavior.",
                     host_path,
                     container_path,
                     other_host_path,
                     other_container_path,
-                    "; ".join(details),
+                    nested_container[0],
+                    nested_container[1],
                 )
 
     def _nested_path_pair(self, first, second):
