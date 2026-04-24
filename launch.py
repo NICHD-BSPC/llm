@@ -305,9 +305,6 @@ class Launcher:
 
     def setup_claude_config(self):
         """Create default ~/.claude.json and ~/.claude/ if needed to prevent Claude Code from hanging."""
-        if self.args.cmd != "claude":
-            return
-
         claude_dir = Path.home() / ".claude"
         if not claude_dir.exists():
             claude_dir.mkdir(parents=True, exist_ok=True)
@@ -634,7 +631,8 @@ class Launcher:
 
         if not args.dry_run:
             self.setup_host_paths()
-            self.setup_claude_config()
+            if args.cmd == "claude":
+                self.setup_claude_config()
             self.backend.check_availability()
             self.backend.validate_image()
 
