@@ -289,6 +289,10 @@ class Launcher:
                 fatal(f"--certs must point to a file, got: {args.certs}")
             args.certs = str(certs_path)
 
+        args.extra_mounts = [
+            self._parse_mount_spec(mount_spec) for mount_spec in args.mount
+        ]
+
         if args.path_prepend and PurePosixPath(args.path_prepend).is_absolute():
             if not self._container_path_is_mounted(args.path_prepend):
                 fatal(
@@ -354,8 +358,7 @@ class Launcher:
             (host_cwd, container_workspace),
         ]
 
-        for mount_spec in args.mount:
-            mounts.append(self._parse_mount_spec(mount_spec))
+        mounts.extend(args.extra_mounts)
 
         if args.conda_env:
             conda_path = args.conda_env
