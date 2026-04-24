@@ -42,12 +42,10 @@ SUBCOMMAND_CONFIG = {
     "shell": {
         "command": ["/bin/bash"],
         "credentials": ["codex", "claude"],
-        "extra_env": {},
     },
     "codex": {
         "command": ["codex", "--sandbox", "danger-full-access"],
         "credentials": ["codex"],
-        "extra_env": {},
     },
     "claude": {
         "command": ["claude"],
@@ -120,7 +118,7 @@ class Backend:
 
     def build_mount_args(self, mounts):
         """Given a dict of mounts, build the arguments for the container to
-        mount them all. """
+        mount them all."""
         mount_args = []
         for host_path, container_path in mounts:
             mount_args.extend([self.mount_flag, f"{host_path}:{container_path}"])
@@ -198,7 +196,7 @@ class SingularityBackend(Backend):
 
     def validate_image(self):
         """Check that the singularity .sif file exists."""
-        if self.args.sif_path.startswith('oras://'):
+        if self.args.sif_path.startswith("oras://"):
             return
         sif_path = Path(self.args.sif_path)
         if not sif_path.exists():
@@ -476,9 +474,6 @@ class Launcher:
             "PATH": self.build_path(),
         }
 
-        # Add subcommand-specific env
-        env.update(subcommand_config["extra_env"])
-
         if self.args.cmd in {"claude", "shell"}:
             env.update(self._host_env_with_prefixes("CLAUDE_CODE", "ANTHROPIC_"))
         if self.args.cmd in {"claude", "pi"}:
@@ -540,7 +535,7 @@ class Launcher:
         return normalized
 
     def _warn_nested_mounts(self, mounts):
-        """Warn when one mount path nests inside another mount path."""
+        """Warn when one container mount target nests inside another."""
         for index, (host_path, container_path) in enumerate(mounts):
             for other_host_path, other_container_path in mounts[index + 1 :]:
                 nested_host = self._nested_path_pair(Path(host_path), Path(other_host_path))
