@@ -41,11 +41,12 @@ def resolve_remote(target):
 
 def resolve_publish_paths(remote_path, remote_tar, remote_launcher, remote_sif):
     "Resolve remote artifact locations for the publish subcommand."
-    base = remote_path.expanduser() if remote_path else None
+    # These are remote paths, so keep "~" intact for the remote shell/user.
+    base = remote_path if remote_path else None
 
-    resolved_tar = remote_tar.expanduser() if remote_tar else None
-    resolved_launcher = remote_launcher.expanduser() if remote_launcher else None
-    resolved_sif = remote_sif.expanduser() if remote_sif else None
+    resolved_tar = remote_tar if remote_tar else None
+    resolved_launcher = remote_launcher if remote_launcher else None
+    resolved_sif = remote_sif if remote_sif else None
 
     if base:
         resolved_tar = resolved_tar or (base / DEFAULT_REMOTE_TAR_NAME)
