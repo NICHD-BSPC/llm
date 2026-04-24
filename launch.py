@@ -331,8 +331,7 @@ class Launcher:
 
     def _is_path_inside_workspace(self, path, host_cwd):
         """Check if a path is inside the workspace directory."""
-        path_str = str(path)
-        return path_str.startswith(host_cwd + "/") or path_str == host_cwd
+        return Path(path).is_relative_to(host_cwd)
 
     def _resolve_conda_path_in_container(
         self, conda_path, host_cwd, container_workspace
@@ -376,20 +375,15 @@ class Launcher:
         if args.certs:
             mounts.append((args.certs, CONTAINER_CERTS_PATH))
 
-        return self._normalize_mounts(mounts)
+        return mounts
 
     def _container_path_is_mounted(self, container_path):
         """Return True when a container path is reachable via the mount set."""
         target = PurePosixPath(container_path)
         for _, mount_target in self._static_mounts():
             mount_path = PurePosixPath(mount_target)
-            if target == mount_path:
+            if target == mount_path or target.is_relative_to(mount_path):
                 return True
-            try:
-                target.relative_to(mount_path)
-                return True
-            except ValueError:
-                continue
         return False
 
     def build_path(self):
@@ -446,27 +440,34 @@ class Launcher:
             env[key] = value
         return env
 
-    def _host_env_with_prefix(self, prefix):
-        """Return host env vars matching a prefix."""
-        return {
-            key: value for key, value in os.environ.items() if key.startswith(prefix)
-        }
-
     def _host_env_with_prefixes(self, *prefixes):
         """Return host env vars matching any of the provided prefixes."""
-        env = {}
-        for prefix in prefixes:
-            env.update(self._host_env_with_prefix(prefix))
-        return env
+        return {
+            key: value for key, value in os.environ.items() if key.startswith(prefixes)
+        }
 
     def _bedrock_enabled(self, env):
-        """Return True when the effective env enables Amazon Bedrock for Claude or Pi"""
-        return (
-            env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
-            or env.get("PI_USE_BEDROCK") == "1"
-        )
+        """Return True when the effective env enables Amazon Bedrock."""
+        if self.args.cmd == "pi":
+            return env.get("PI_USE_BEDROCK") == "1"
 
-    def build_env_vars(self, subcommand_config):
+        return env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
+
+    def _validate_bedrock_env(self, env):
+        """Validate Bedrock-related environment requirements once."""
+        if self._bedrock_enabled(env) and not env.get("AWS_PROFILE"):
+            required_flag = (
+                "PI_USE_BEDROCK=1"
+                if self.args.cmd == "pi"
+                else "CLAUDE_CODE_USE_BEDROCK=1"
+            )
+            fatal(
+                f"AWS_PROFILE must be set for {self.args.cmd} when "
+                f"{required_flag}. Inherit it from the host or pass "
+                "--env AWS_PROFILE=..."
+            )
+
+    def build_env_vars(self):
         """Build all environment variables for the container."""
         args = self.args
         user_env = self._parse_user_env()
@@ -492,13 +493,14 @@ class Launcher:
         env.update(user_env)
 
         if self._bedrock_enabled(env):
-            for key, value in self._host_env_with_prefix("AWS_").items():
+            for key, value in self._host_env_with_prefixes("AWS_").items():
                 env.setdefault(key, value)
 
         if args.certs:
             for var_name in CERT_FILE_ENV_VARS:
                 env.setdefault(var_name, CONTAINER_CERTS_PATH)
 
+        self._validate_bedrock_env(env)
         return env
 
     def build_mounts(self, subcommand_config, env_vars=None):
@@ -517,23 +519,20 @@ class Launcher:
 
     def _normalize_mounts(self, mounts):
         """Deduplicate identical mounts and reject conflicting container paths."""
-        seen_mounts = set()
         container_targets = {}
         normalized = []
 
         for host_path, container_path in mounts:
-            mount_key = (host_path, container_path)
-            if mount_key in seen_mounts:
+            existing_host_path = container_targets.get(container_path)
+            if existing_host_path == host_path:
                 continue
 
-            existing_host_path = container_targets.get(container_path)
             if existing_host_path is not None and existing_host_path != host_path:
                 fatal(
                     "conflicting mounts for container path "
                     f"'{container_path}': '{existing_host_path}' and '{host_path}'."
                 )
 
-            seen_mounts.add(mount_key)
             container_targets[container_path] = host_path
             normalized.append((host_path, container_path))
 
@@ -569,17 +568,13 @@ class Launcher:
         if first == second:
             return None
 
-        try:
-            second.relative_to(first)
+        if second.is_relative_to(first):
             return str(first), str(second)
-        except ValueError:
-            pass
 
-        try:
-            first.relative_to(second)
+        if first.is_relative_to(second):
             return str(second), str(first)
-        except ValueError:
-            return None
+
+        return None
 
     def _credential_mounts(self, tool):
         """
@@ -652,15 +647,7 @@ class Launcher:
 
         # Config for this subcommand (claude, codex, shell)
         subcommand_config = SUBCOMMAND_CONFIG[args.cmd]
-        env_vars = self.build_env_vars(subcommand_config)
-
-        if self._bedrock_enabled(env_vars) and not env_vars.get("AWS_PROFILE"):
-            fatal(
-                f"AWS_PROFILE must be set for {args.cmd} when "
-                "CLAUDE_CODE_USE_BEDROCK=1 or PI_USE_BEDROCK=1. Inherit it from the host or pass "
-                "--env AWS_PROFILE=..."
-            )
-
+        env_vars = self.build_env_vars()
         mounts = self.build_mounts(subcommand_config, env_vars)
 
         # Build command args (subcommand command + any tool args from command line)
