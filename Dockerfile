@@ -5,6 +5,7 @@ ARG USERNAME=devuser
 ARG USER_UID=1000
 ARG USER_GID=1000
 ARG DEBIAN_FRONTEND=noninteractive
+ARG NODE_VERSION=22.22.2
 
 RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
     APT_HTTPS_OPTS="$(if [ -f /run/secrets/mitm_ca_bundle.pem ]; then printf '%s' '-o Acquire::https::CaInfo=/run/secrets/mitm_ca_bundle.pem'; fi)" && \
@@ -47,14 +48,32 @@ RUN ARCH="$(dpkg --print-architecture)" && \
       echo 'AWS_ARCH=x86_64' >> /etc/arch.env && \
       echo 'CLAUDE_PLATFORM=linux-x64' >> /etc/arch.env && \
       echo 'CODEX_ASSET=codex-x86_64-unknown-linux-musl.tar.gz' >> /etc/arch.env && \
-      echo 'CODEX_BINARY=codex-x86_64-unknown-linux-musl' >> /etc/arch.env ;; \
+      echo 'CODEX_BINARY=codex-x86_64-unknown-linux-musl' >> /etc/arch.env && \
+      echo 'NODE_ARCH=x64' >> /etc/arch.env ;; \
     arm64) \
       echo 'AWS_ARCH=aarch64' >> /etc/arch.env && \
       echo 'CLAUDE_PLATFORM=linux-arm64' >> /etc/arch.env && \
       echo 'CODEX_ASSET=codex-aarch64-unknown-linux-musl.tar.gz' >> /etc/arch.env && \
-      echo 'CODEX_BINARY=codex-aarch64-unknown-linux-musl' >> /etc/arch.env ;; \
+      echo 'CODEX_BINARY=codex-aarch64-unknown-linux-musl' >> /etc/arch.env && \
+      echo 'NODE_ARCH=arm64' >> /etc/arch.env ;; \
     *) echo "Unsupported architecture: ${ARCH}" >&2; exit 1 ;; \
   esac
+
+# Install Node.js from the official upstream tarball.
+RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
+  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
+  if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
+  export CURL_CA_BUNDLE && \
+  . /etc/arch.env && \
+  NODE_DISTRO="node-v${NODE_VERSION}-linux-${NODE_ARCH}" && \
+  NODE_TARBALL="${NODE_DISTRO}.tar.xz" && \
+  curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" -o /tmp/SHASUMS256.txt && \
+  curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}" -o /tmp/node.tar.xz && \
+  EXPECTED_SHA256="$(awk -v tarball="${NODE_TARBALL}" '$2 == tarball { print $1 }' /tmp/SHASUMS256.txt)" && \
+  test -n "${EXPECTED_SHA256}" && \
+  echo "${EXPECTED_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
+  tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner && \
+  rm -f /tmp/SHASUMS256.txt /tmp/node.tar.xz
 
 # Install AWS CLI v2
 RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
@@ -97,6 +116,13 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   tar -xzf /tmp/codex.tar.gz -C /tmp && \
   install -m 0755 "/tmp/${CODEX_BINARY}" /usr/local/bin/codex && \
   rm -rf /tmp/codex.tar.gz "/tmp/${CODEX_BINARY}"
+
+RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
+  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
+  if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
+  export CURL_CA_BUNDLE && \
+  . /etc/arch.env && \
+  npm install -g @mariozechner/pi-coding-agent
 
 # Various env vars
 ENV DEVCONTAINER=true \

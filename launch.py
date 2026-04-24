@@ -33,6 +33,7 @@ CREDENTIAL_PATHS = {
         "~/.claude",
         "~/.claude.json",
     ),
+    "pi": ("~/.pi",),
     "aws": ("~/.aws",),  # ~/.aws/sso and ~/.aws/config have credentials
 }
 
@@ -51,7 +52,10 @@ SUBCOMMAND_CONFIG = {
     "claude": {
         "command": ["claude"],
         "credentials": ["claude"],
-        "extra_env": {},
+    },
+    "pi": {
+        "command": ["pi"],
+        "credentials": ["pi"],
     },
 }
 
@@ -450,8 +454,11 @@ class Launcher:
         return env
 
     def _bedrock_enabled(self, env):
-        """Return True when the effective env enables Claude Bedrock."""
-        return env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
+        """Return True when the effective env enables Amazon Bedrock for Claude or Pi"""
+        return (
+            env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
+            or env.get("PI_USE_BEDROCK") == "1"
+        )
 
     def build_env_vars(self, subcommand_config):
         """Build all environment variables for the container."""
@@ -474,6 +481,8 @@ class Launcher:
 
         if self.args.cmd in {"claude", "shell"}:
             env.update(self._host_env_with_prefixes("CLAUDE_CODE", "ANTHROPIC_"))
+        if self.args.cmd in {"claude", "pi"}:
+            env.update(self._host_env_with_prefixes("PI_"))
 
         effective_env = dict(env)
 
@@ -650,7 +659,7 @@ class Launcher:
         if self._bedrock_enabled(env_vars) and not env_vars.get("AWS_PROFILE"):
             fatal(
                 f"AWS_PROFILE must be set for {args.cmd} when "
-                "CLAUDE_CODE_USE_BEDROCK=1. Inherit it from the host or pass "
+                "CLAUDE_CODE_USE_BEDROCK=1 or PI_USE_BEDROCK=1. Inherit it from the host or pass "
                 "--env AWS_PROFILE=..."
             )
 
@@ -781,6 +790,8 @@ def build_parser():
         "claude",
         help="Run claude in the container",
     )
+
+    subparsers.add_parser("pi", help="Run pi in the container")
 
     return parser
 

@@ -111,7 +111,7 @@ echo ""
 
 # 9. Available Commands
 echo "--- Available Commands ---"
-for cmd in python python3 git bash; do
+for cmd in python python3 git bash node npm pi; do
     if command -v $cmd &> /dev/null; then
         version=$($cmd --version 2>&1 | head -1 || echo "unknown")
         echo "✓ $cmd: $version"
