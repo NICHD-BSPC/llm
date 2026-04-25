@@ -16,6 +16,7 @@ Overview of the flow:
 
 
 import argparse
+import json
 import logging
 import os
 import platform
@@ -267,8 +268,11 @@ class Launcher:
                 f"--workspace-mount must be an absolute path, got: {args.workspace_mount}"
             )
 
-        # If mounting a conda env, needs to exist and have a bin dir
+        # If mounting a conda env, needs to exist and have a bin dir.
+        # A value without "/" is treated as a named env and resolved via conda.
         if args.conda_env:
+            if "/" not in args.conda_env:
+                args.conda_env = self._resolve_named_conda_env(args.conda_env)
             conda_path = Path(args.conda_env).expanduser().resolve()
             if (
                 not conda_path.exists()
@@ -280,6 +284,7 @@ class Launcher:
                     f"bin/ directory. Got: {args.conda_env}"
                 )
             args.conda_env = str(conda_path)
+            self._check_conda_env_arch(conda_path)
 
         if args.certs:
             certs_path = Path(args.certs).expanduser().resolve()
@@ -328,6 +333,55 @@ class Launcher:
             pi_dir.mkdir(parents=True, exist_ok=True)
             if self.args.verbose:
                 LOGGER.info("Created directory: %s", pi_dir)
+
+    def _check_conda_env_arch(self, conda_path):
+        """Fail if the env's python is a Mach-O binary (won't run in Linux container)."""
+        python_bin = conda_path / "bin" / "python"
+        if not python_bin.is_file():
+            return
+        try:
+            with open(python_bin, "rb") as f:
+                magic = f.read(4)
+        except OSError:
+            return
+        # Mach-O magic numbers (32/64-bit, both endiannesses, fat binaries).
+        mach_o_magics = {
+            b"\xfe\xed\xfa\xce",
+            b"\xce\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf",
+            b"\xcf\xfa\xed\xfe",
+            b"\xca\xfe\xba\xbe",
+            b"\xbe\xba\xfe\xca",
+        }
+        if magic in mach_o_magics:
+            fatal(
+                f"--conda-env '{conda_path}' contains macOS (Mach-O) binaries, "
+                "which won't run inside the Linux container. "
+            )
+
+    def _resolve_named_conda_env(self, name):
+        """Resolve a named conda env to its path using `conda env list`."""
+        conda = shutil.which("conda")
+        if conda is None:
+            fatal(
+                f"--conda-env '{name}' looks like a named env but 'conda' "
+                "is not in PATH."
+            )
+        try:
+            result = subprocess.run(
+                [conda, "env", "list", "--json"],
+                capture_output=True,
+                check=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            fatal(f"failed to list conda envs: {exc.stderr.strip() or exc}")
+
+        envs = json.loads(result.stdout).get("envs", [])
+        for env_path in envs:
+            if Path(env_path).name == name:
+                return env_path
+        fatal(f"--conda-env named '{name}' not found in 'conda env list'.")
 
     def _is_path_inside_workspace(self, path, host_cwd):
         """Check if a path is inside the workspace directory."""
