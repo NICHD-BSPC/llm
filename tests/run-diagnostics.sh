@@ -13,6 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LAUNCH_PY="$REPO_DIR/launch.py"
 DIAGNOSTICS_SCRIPT="$SCRIPT_DIR/container-diagnostics.sh"
+CONTAINER_DIAGNOSTICS_SCRIPT="/tmp/container-diagnostics.sh"
 PROMPT="Please run the script located at tests/container-diagnostics.sh using bash. Print the results EXACTLY. Then write a haiku based on this output"
 
 # Colors
@@ -137,8 +138,9 @@ run_shell_diagnostics() {
         --backend "$BACKEND" \
         ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"} \
         ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
+        --mount "$DIAGNOSTICS_SCRIPT:$CONTAINER_DIAGNOSTICS_SCRIPT" \
         shell \
-        "$DIAGNOSTICS_SCRIPT"
+        bash "$CONTAINER_DIAGNOSTICS_SCRIPT"
 }
 
 run_codex_diagnostics() {
