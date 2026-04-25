@@ -32,6 +32,7 @@ echo "TOOL: ${TOOL:-NOT_SET}"
 echo "AWS_REGION: ${AWS_REGION:-NOT_SET}"
 echo "AWS_PROFILE: ${AWS_PROFILE:-NOT_SET}"
 echo "CLAUDE_CODE_USE_BEDROCK: ${CLAUDE_CODE_USE_BEDROCK:-NOT_SET}"
+echo "PI_USE_BEDROCK: ${PI_USE_BEDROCK:-NOT_SET}"
 echo "PATH: $PATH"
 echo ""
 
@@ -63,12 +64,19 @@ else
     echo "✗ ~/.claude.json does not exist"
 fi
 
+BEDROCK_ENABLED=0
+if [ "${CLAUDE_CODE_USE_BEDROCK:-0}" = "1" ] || [ "${PI_USE_BEDROCK:-0}" = "1" ]; then
+    BEDROCK_ENABLED=1
+fi
+
 if [ -d ~/.aws ]; then
     echo "✓ ~/.aws exists"
     [ -f ~/.aws/config ] && echo "  ✓ config found" || echo "  ✗ config NOT found"
     [ -d ~/.aws/sso/cache ] && echo "  ✓ sso/cache found" || echo "  ✗ sso/cache NOT found"
-else
+elif [ "$BEDROCK_ENABLED" -eq 1 ]; then
     echo "✗ ~/.aws does not exist"
+else
+    echo "- ~/.aws not mounted (Bedrock disabled)"
 fi
 echo ""
 
