@@ -504,17 +504,24 @@ class Launcher:
         """Return True when the effective env enables Amazon Bedrock."""
         if self.args.cmd == "pi":
             return env.get("PI_USE_BEDROCK") == "1"
-
-        return env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
+        if self.args.cmd == "claude":
+            return env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
+        if self.args.cmd == "shell":
+            return (
+                env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
+                or env.get("PI_USE_BEDROCK") == "1"
+            )
+        return False
 
     def _validate_bedrock_env(self, env):
         """Validate Bedrock-related environment requirements once."""
         if self._bedrock_enabled(env) and not env.get("AWS_PROFILE"):
-            required_flag = (
-                "PI_USE_BEDROCK=1"
-                if self.args.cmd == "pi"
-                else "CLAUDE_CODE_USE_BEDROCK=1"
-            )
+            if self.args.cmd == "pi":
+                required_flag = "PI_USE_BEDROCK=1"
+            elif self.args.cmd == "shell":
+                required_flag = "CLAUDE_CODE_USE_BEDROCK=1 or PI_USE_BEDROCK=1"
+            else:
+                required_flag = "CLAUDE_CODE_USE_BEDROCK=1"
             fatal(
                 f"AWS_PROFILE must be set for {self.args.cmd} when "
                 f"{required_flag}. Inherit it from the host or pass "
@@ -539,7 +546,7 @@ class Launcher:
 
         if self.args.cmd in {"claude", "shell"}:
             env.update(self._host_env_with_prefixes("CLAUDE_CODE", "ANTHROPIC_"))
-        if self.args.cmd in {"claude", "pi"}:
+        if self.args.cmd in {"pi", "shell"}:
             env.update(self._host_env_with_prefixes("PI_"))
 
         # Args on the command line win over launcher defaults and inherited

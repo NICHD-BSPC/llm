@@ -63,6 +63,18 @@ jobs:
             exit "$status"
           fi
 
+          script -q -e -c "bash CLAUDE_CODE_USE_BEDROCK=1 tests/run-diagnostics.sh --image-name ${PODMAN_IMAGE_NAME} shell podman" /dev/null 2>&1 | tee -a "$log_file"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+
+          script -q -e -c "bash PI_USE_BEDROCK=1 tests/run-diagnostics.sh --image-name ${PODMAN_IMAGE_NAME} shell podman" /dev/null 2>&1 | tee -a "$log_file"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+
           if grep -q '✗' "$log_file"; then
             echo "Diagnostics output contained a failure marker (✗)." >&2
             exit 1
