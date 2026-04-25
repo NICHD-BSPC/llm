@@ -36,7 +36,7 @@ jobs:
           sudo apt-get install -y podman
 
       - name: Build container image
-        run: python3 build.py build
+        run: python3 build.py
 
       - name: Run shell diagnostics
         run: |
@@ -105,7 +105,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl podman rsync openssh-server
+          sudo apt-get install -y curl podman
 
           curl -fsSL \
             -o /tmp/apptainer.deb \
@@ -118,29 +118,23 @@ jobs:
           apptainer --version
           singularity --version
 
-      - name: Build Singularity image through localhost publish flow
+      - name: Build Podman image
         run: |
-          mkdir -p "$HOME/.ssh"
-          chmod 700 "$HOME/.ssh"
-          ssh-keygen -t ed25519 -f "$HOME/.ssh/id_ed25519" -N ""
-          cat "$HOME/.ssh/id_ed25519.pub" >> "$HOME/.ssh/authorized_keys"
-          chmod 600 "$HOME/.ssh/authorized_keys"
-          ssh-keyscan -H localhost >> "$HOME/.ssh/known_hosts"
-          chmod 600 "$HOME/.ssh/known_hosts"
+          python3 build.py
 
-          eval "$(ssh-agent -s)"
-          ssh-add "$HOME/.ssh/id_ed25519"
+      - name: Export Podman image as docker archive
+        run: |
+          podman save \
+            -o llm-image.tar \
+            --format docker-archive \
+            "${PODMAN_IMAGE_NAME}"
 
-          sudo mkdir -p /run/sshd
-          sudo /usr/sbin/sshd
-
-          python3 build.py publish \
-            --remote-path /tmp/llm-ci \
-            --force \
-            localhost
+      - name: Build Singularity image from docker archive
+        run: |
+          apptainer build "${SINGULARITY_SIF_PATH}" "docker-archive:$(pwd)/llm-image.tar"
 
       - name: Verify Singularity artifact exists
-        run: ssh localhost test -f /tmp/llm-ci/llm.sif
+        run: test -f "${SINGULARITY_SIF_PATH}"
 
       - name: Run shell diagnostics
         run: |
@@ -148,7 +142,6 @@ jobs:
           log_file="$(mktemp)"
           mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache"
           touch "$HOME/.codex/auth.json" "$HOME/.claude/settings.json" "$HOME/.claude.json" "$HOME/.aws/config"
-          cp /tmp/llm-ci/llm.sif .
           script -q -e -c "bash tests/run-diagnostics.sh --sif-path ${SINGULARITY_SIF_PATH} shell singularity" /dev/null 2>&1 | tee -a "$log_file"
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
