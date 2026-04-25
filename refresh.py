@@ -205,40 +205,28 @@ def parse_args() -> argparse.Namespace:
         default=user,
         help="username for remote, defaults to %(default)s",
     )
-    return ap.parse_args()
+    args = ap.parse_args()
+    if args.bedrock_export:
+        args.kind = "bedrock"
+    return args
 
 
 def main() -> int:
     args = parse_args()
-    auth_path_lookup = {
-        kind: list(paths["auth"]) for kind, paths in CREDENTIAL_PATHS.items()
-    }
-    full_path_lookup = {
-        kind: list(paths["full"]) for kind, paths in CREDENTIAL_PATHS.items()
-    }
-
-    if args.bedrock_export:
-        try:
-            refresh_aws_sso()
-            print(bedrock_export_command())
-        except RuntimeError as e:
-            print(str(e), file=sys.stderr)
-            return 1
-        return 0
 
     if args.show_files:
         print(
             "Auth paths that will be refreshed if needed, and pushed to remote if using --remote:"
         )
-        for k, v in auth_path_lookup.items():
+        for k, paths in CREDENTIAL_PATHS.items():
             print(f"  {k}:")
-            for i in v:
-                print(f"    {i}")
+            for path in paths["auth"]:
+                print(f"    {path}")
         print("Full paths (will be transferred if using --full):")
-        for k, v in full_path_lookup.items():
+        for k, paths in CREDENTIAL_PATHS.items():
             print(f"  {k}:")
-            for i in v:
-                print(f"    {i}")
+            for path in paths["full"]:
+                print(f"    {path}")
         sys.exit(0)
 
     if args.kind in ("all", "claude"):
@@ -254,18 +242,9 @@ def main() -> int:
             return 1
         return 0
 
-    if args.kind == "all":
-        paths = []
-        for values in auth_path_lookup.values():
-            paths.extend(values)
-
-        full_paths = []
-        for values in full_path_lookup.values():
-            full_paths.extend(values)
-
-    else:
-        paths = auth_path_lookup[args.kind]
-        full_paths = full_path_lookup[args.kind]
+    kinds = CREDENTIAL_PATHS.keys() if args.kind == "all" else [args.kind]
+    paths = [path for kind in kinds for path in CREDENTIAL_PATHS[kind]["auth"]]
+    full_paths = [path for kind in kinds for path in CREDENTIAL_PATHS[kind]["full"]]
 
     if args.remote:
         for path in paths:

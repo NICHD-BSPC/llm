@@ -16,13 +16,15 @@ Overview of the flow:
 
 
 import argparse
+import json
+import logging
 import os
 import platform
 import shlex
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 # Hard-coded credential and config paths.
@@ -31,39 +33,28 @@ CREDENTIAL_PATHS = {
     "claude": (
         "~/.claude",
         "~/.claude.json",
-        "~/.aws",
-    ),  # ~/.aws/sso and ~/.aws/config have credentials
+    ),
+    "pi": ("~/.pi",),
+    "aws": ("~/.aws",),  # ~/.aws/sso and ~/.aws/config have credentials
 }
 
 # Unique config for each subcommand
 SUBCOMMAND_CONFIG = {
     "shell": {
         "command": ["/bin/bash"],
-        "credentials": ["codex", "claude"],
-        "extra_env": {
-            "CLAUDE_CODE_USE_BEDROCK": "1",
-            "DISABLE_AUTOUPDATER": "1",
-            "DISABLE_INSTALLATION_CHECKS": "1",
-        },
-        "include_aws_env": True,
+        "credentials": ["codex", "claude", "pi"],
     },
     "codex": {
         "command": ["codex", "--sandbox", "danger-full-access"],
         "credentials": ["codex"],
-        "extra_env": {},
-        "include_aws_env": False,
     },
     "claude": {
         "command": ["claude"],
         "credentials": ["claude"],
-        "extra_env": {
-            "CLAUDE_CODE_USE_BEDROCK": "1",
-            "CLAUDE_CODE_NO_FLICKER": "1",
-            "DISABLE_AUTOUPDATER": "1",
-            "DISABLE_INSTALLATION_CHECKS": "1",
-        },
-        "include_aws_env": True,
-        "require_aws_profile": True,
+    },
+    "pi": {
+        "command": ["pi"],
+        "credentials": ["pi"],
     },
 }
 
@@ -82,7 +73,26 @@ CERT_FILE_ENV_VARS = (
 )
 
 DEFAULT_PODMAN_IMAGE = "ghcr.io/nichd-bspc/llm"
-DEFAULT_SINGULARITY_IMAGE = "ghcr.io/nichd-bspc/llm-sif"
+DEFAULT_SINGULARITY_IMAGE = "oras://ghcr.io/nichd-bspc/llm-sif"
+DEFAULT_CERTS_ENV_VAR = "LLM_DEVCONTAINER_CERTS"
+LOGGER = logging.getLogger("launch")
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def configure_logging(verbose=False):
+    """Configure CLI logging."""
+    LOGGER.handlers.clear()
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    LOGGER.addHandler(handler)
+    LOGGER.setLevel(logging.INFO if verbose else logging.WARNING)
+    LOGGER.propagate = False
+
+
+def fatal(message):
+    """Log an error message and exit."""
+    LOGGER.error(message)
+    raise SystemExit(1)
 
 
 class Backend:
@@ -109,7 +119,7 @@ class Backend:
 
     def build_mount_args(self, mounts):
         """Given a dict of mounts, build the arguments for the container to
-        mount them all. """
+        mount them all."""
         mount_args = []
         for host_path, container_path in mounts:
             mount_args.extend([self.mount_flag, f"{host_path}:{container_path}"])
@@ -118,8 +128,7 @@ class Backend:
     def check_availability(self):
         "Ensure the container runtime is available."
         if shutil.which(self.command) is None:
-            print(f"Error: missing command '{self.command}' in PATH.", file=sys.stderr)
-            sys.exit(1)
+            fatal(f"missing command '{self.command}' in PATH.")
 
     def validate_image(self):
         """Validate that the container image exists. Override in subclasses."""
@@ -142,15 +151,10 @@ class PodmanBackend(Backend):
             capture_output=True,
         )
         if result.returncode != 0:
-            print(
-                f"Error: podman image '{self.args.image_name}' not found.",
-                file=sys.stderr,
+            fatal(
+                f"podman image '{self.args.image_name}' not found. "
+                "Build it first or specify a different image with --image-name."
             )
-            print(
-                "Build it first or specify a different image with --image-name.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
 
     def build_command(self, env_vars, mounts, command_args):
         args = self.args
@@ -193,30 +197,23 @@ class SingularityBackend(Backend):
 
     def validate_image(self):
         """Check that the singularity .sif file exists."""
+        if self.args.sif_path.startswith("oras://"):
+            return
         sif_path = Path(self.args.sif_path)
         if not sif_path.exists():
-            print(
-                f"Error: singularity image '{self.args.sif_path}' not found.",
-                file=sys.stderr,
+            fatal(
+                f"singularity image '{self.args.sif_path}' not found. "
+                "Build it first or specify a different path with --sif-path."
             )
-            print(
-                "Build it first or specify a different path with --sif-path.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
         if not sif_path.is_file():
-            print(
-                f"Error: singularity image '{self.args.sif_path}' is not a file.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            fatal(f"singularity image '{self.args.sif_path}' is not a file.")
 
     def build_command(self, env_vars, mounts, command_args):
         args = self.args
 
-        env_vars = dict(env_vars)
-        home_dir = env_vars.pop("HOME", None)
-        env_args = self.build_env_args(env_vars)
+        container_env = dict(env_vars)
+        home_dir = container_env.pop("HOME", None)
+        env_args = self.build_env_args(container_env)
         mount_args = self.build_mount_args(mounts)
         home_arg = []
 
@@ -230,6 +227,7 @@ class SingularityBackend(Backend):
             *home_arg,
             *env_args,
             *mount_args,
+            "--cleanenv",
             "--pwd", args.workspace_mount or os.getcwd(),
             args.sif_path,
             *command_args,
@@ -242,6 +240,7 @@ class Launcher:
 
     def __init__(self, args):
         self.args = args
+        configure_logging(args.verbose)
         self._validate_args()
 
         # Decide which backend subclass to use
@@ -257,44 +256,55 @@ class Launcher:
 
         args = self.args  # for convenience in this method...
 
+        if args.sif_path and not args.sif_path.startswith("oras://"):
+            sif_path = Path(args.sif_path).expanduser()
+            if not sif_path.is_absolute():
+                sif_path = SCRIPT_DIR / sif_path
+            args.sif_path = str(sif_path.resolve())
+
         # a relative --workspace-mount doesn't make sense (what would it be relative to?)
         if args.workspace_mount and not Path(args.workspace_mount).is_absolute():
-            print(
-                f"Error: --workspace-mount must be an absolute path, got: {args.workspace_mount}",
-                file=sys.stderr,
+            fatal(
+                f"--workspace-mount must be an absolute path, got: {args.workspace_mount}"
             )
-            sys.exit(1)
 
-        # If mounting a conda env, needs to exist and have a bin dir
+        # If mounting a conda env, needs to exist and have a bin dir.
+        # A value without "/" is treated as a named env and resolved via conda.
         if args.conda_env:
+            if "/" not in args.conda_env:
+                args.conda_env = self._resolve_named_conda_env(args.conda_env)
             conda_path = Path(args.conda_env).expanduser().resolve()
             if (
                 not conda_path.exists()
                 or not conda_path.is_dir()
                 or not (conda_path / "bin").is_dir()
             ):
-                print(
-                    f"Error: --conda-env path needs to be a directory containing a bin/ directory. Got: {args.conda_env}",
-                    file=sys.stderr,
+                fatal(
+                    "--conda-env path needs to be a directory containing a "
+                    f"bin/ directory. Got: {args.conda_env}"
                 )
-                sys.exit(1)
             args.conda_env = str(conda_path)
+            self._check_conda_env_arch(conda_path)
 
         if args.certs:
             certs_path = Path(args.certs).expanduser().resolve()
             if not certs_path.exists():
-                print(
-                    f"Error: --certs file not found: {args.certs}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+                fatal(f"--certs file not found: {args.certs}")
             if not certs_path.is_file():
-                print(
-                    f"Error: --certs must point to a file, got: {args.certs}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+                fatal(f"--certs must point to a file, got: {args.certs}")
             args.certs = str(certs_path)
+
+        args.extra_mounts = [
+            self._parse_mount_spec(mount_spec) for mount_spec in args.mount
+        ]
+
+        if args.path_prepend and PurePosixPath(args.path_prepend).is_absolute():
+            if not self._container_path_is_mounted(args.path_prepend):
+                fatal(
+                    f"--path-prepend path '{args.path_prepend}' is absolute but is "
+                    "not available in the container. Add a matching --mount or "
+                    "use a workspace-relative path."
+                )
 
     def setup_host_paths(self):
         """Create necessary host directories before launch."""
@@ -303,20 +313,79 @@ class Launcher:
         (local_dir / "bin").mkdir(parents=True, exist_ok=True)
 
     def setup_claude_config(self):
-        """Create default ~/.claude.json if it doesn't exist to prevent Claude Code from hanging."""
-        if self.args.cmd != "claude":
-            return
+        """Create default ~/.claude.json and ~/.claude/ if needed to prevent Claude Code from hanging."""
+        claude_dir = Path.home() / ".claude"
+        if not claude_dir.exists():
+            claude_dir.mkdir(parents=True, exist_ok=True)
+            if self.args.verbose:
+                LOGGER.info("Created directory: %s", claude_dir)
 
         claude_config = Path.home() / ".claude.json"
         if not claude_config.exists():
             claude_config.write_text("{}\n")
             if self.args.verbose:
-                print(f"Created default config: {claude_config}", file=sys.stderr)
+                LOGGER.info("Created default config: %s", claude_config)
+
+    def setup_pi_config(self):
+        """Create pi dirs if needed"""
+        pi_dir = Path.home() / ".pi"
+        if not pi_dir.exists():
+            pi_dir.mkdir(parents=True, exist_ok=True)
+            if self.args.verbose:
+                LOGGER.info("Created directory: %s", pi_dir)
+
+    def _check_conda_env_arch(self, conda_path):
+        """Fail if the env's python is a Mach-O binary (won't run in Linux container)."""
+        python_bin = conda_path / "bin" / "python"
+        if not python_bin.is_file():
+            return
+        try:
+            with open(python_bin, "rb") as f:
+                magic = f.read(4)
+        except OSError:
+            return
+        # Mach-O magic numbers (32/64-bit, both endiannesses, fat binaries).
+        mach_o_magics = {
+            b"\xfe\xed\xfa\xce",
+            b"\xce\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf",
+            b"\xcf\xfa\xed\xfe",
+            b"\xca\xfe\xba\xbe",
+            b"\xbe\xba\xfe\xca",
+        }
+        if magic in mach_o_magics:
+            fatal(
+                f"--conda-env '{conda_path}' contains macOS (Mach-O) binaries, "
+                "which won't run inside the Linux container. "
+            )
+
+    def _resolve_named_conda_env(self, name):
+        """Resolve a named conda env to its path using `conda env list`."""
+        conda = shutil.which("conda")
+        if conda is None:
+            fatal(
+                f"--conda-env '{name}' looks like a named env but 'conda' "
+                "is not in PATH."
+            )
+        try:
+            result = subprocess.run(
+                [conda, "env", "list", "--json"],
+                capture_output=True,
+                check=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            fatal(f"failed to list conda envs: {exc.stderr.strip() or exc}")
+
+        envs = json.loads(result.stdout).get("envs", [])
+        for env_path in envs:
+            if Path(env_path).name == name:
+                return env_path
+        fatal(f"--conda-env named '{name}' not found in 'conda env list'.")
 
     def _is_path_inside_workspace(self, path, host_cwd):
         """Check if a path is inside the workspace directory."""
-        path_str = str(path)
-        return path_str.startswith(host_cwd + "/") or path_str == host_cwd
+        return Path(path).is_relative_to(host_cwd)
 
     def _resolve_conda_path_in_container(
         self, conda_path, host_cwd, container_workspace
@@ -335,6 +404,41 @@ class Launcher:
         else:
             # Outside workspace - use absolute path
             return f"{conda_path}/bin"
+
+    def _static_mounts(self):
+        """Return mounts known before runtime env calculation."""
+        args = self.args
+        host_cwd = os.getcwd()
+        container_workspace = args.workspace_mount or host_cwd
+
+        mounts = [
+            (
+                str(Path(args.container_local_host_dir).expanduser()),
+                "/home/devuser/.local",
+            ),
+            (host_cwd, container_workspace),
+        ]
+
+        mounts.extend(args.extra_mounts)
+
+        if args.conda_env:
+            conda_path = args.conda_env
+            if not self._is_path_inside_workspace(conda_path, host_cwd):
+                mounts.append((conda_path, conda_path))
+
+        if args.certs:
+            mounts.append((args.certs, CONTAINER_CERTS_PATH))
+
+        return mounts
+
+    def _container_path_is_mounted(self, container_path):
+        """Return True when a container path is reachable via the mount set."""
+        target = PurePosixPath(container_path)
+        for _, mount_target in self._static_mounts():
+            mount_path = PurePosixPath(mount_target)
+            if target == mount_path or target.is_relative_to(mount_path):
+                return True
+        return False
 
     def build_path(self):
         """
@@ -360,7 +464,12 @@ class Launcher:
 
         # Add path-prepend if specified
         if args.path_prepend:
-            path = f"{container_workspace}/{args.path_prepend}:{path}"
+            path_prepend = PurePosixPath(args.path_prepend)
+            if path_prepend.is_absolute():
+                prepend_path = str(path_prepend)
+            else:
+                prepend_path = str(PurePosixPath(container_workspace) / path_prepend)
+            path = f"{prepend_path}:{path}"
 
         # Add conda env if specified (takes highest precedence)
         if args.conda_env:
@@ -372,9 +481,57 @@ class Launcher:
 
         return path
 
-    def build_env_vars(self, subcommand_config):
+    def _parse_user_env(self):
+        """Parse repeatable --env values into a dict."""
+        env = {}
+        for env_var in self.args.env:
+            if "=" not in env_var:
+                fatal(
+                    f"invalid environment variable format '{env_var}'. "
+                    "Expected KEY=VALUE."
+                )
+            key, value = env_var.split("=", 1)
+            env[key] = value
+        return env
+
+    def _host_env_with_prefixes(self, *prefixes):
+        """Return host env vars matching any of the provided prefixes."""
+        return {
+            key: value for key, value in os.environ.items() if key.startswith(prefixes)
+        }
+
+    def _bedrock_enabled(self, env):
+        """Return True when the effective env enables Amazon Bedrock."""
+        if self.args.cmd == "pi":
+            return env.get("PI_USE_BEDROCK") == "1"
+        if self.args.cmd == "claude":
+            return env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
+        if self.args.cmd == "shell":
+            return (
+                env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
+                or env.get("PI_USE_BEDROCK") == "1"
+            )
+        return False
+
+    def _validate_bedrock_env(self, env):
+        """Validate Bedrock-related environment requirements once."""
+        if self._bedrock_enabled(env) and not env.get("AWS_PROFILE"):
+            if self.args.cmd == "pi":
+                required_flag = "PI_USE_BEDROCK=1"
+            elif self.args.cmd == "shell":
+                required_flag = "CLAUDE_CODE_USE_BEDROCK=1 or PI_USE_BEDROCK=1"
+            else:
+                required_flag = "CLAUDE_CODE_USE_BEDROCK=1"
+            fatal(
+                f"AWS_PROFILE must be set for {self.args.cmd} when "
+                f"{required_flag}. Inherit it from the host or pass "
+                "--env AWS_PROFILE=..."
+            )
+
+    def build_env_vars(self):
         """Build all environment variables for the container."""
         args = self.args
+        user_env = self._parse_user_env()
 
         # Base environment
         env = {
@@ -387,94 +544,98 @@ class Launcher:
             "PATH": self.build_path(),
         }
 
-        # Add subcommand-specific env
-        env.update(subcommand_config["extra_env"])
+        if self.args.cmd in {"claude", "shell"}:
+            env.update(self._host_env_with_prefixes("CLAUDE_CODE", "ANTHROPIC_"))
+        if self.args.cmd in {"pi", "shell"}:
+            env.update(self._host_env_with_prefixes("PI_"))
 
-        # Add AWS env if needed
-        if subcommand_config.get("include_aws_env"):
-            env["AWS_REGION"] = args.aws_region
-            env["AWS_PROFILE"] = args.aws_profile or ""
+        # Args on the command line win over launcher defaults and inherited
+        # tool-specific host env.
+        env.update(user_env)
+
+        if self._bedrock_enabled(env):
+            for key, value in self._host_env_with_prefixes("AWS_").items():
+                env.setdefault(key, value)
 
         if args.certs:
             for var_name in CERT_FILE_ENV_VARS:
-                env[var_name] = CONTAINER_CERTS_PATH
+                env.setdefault(var_name, CONTAINER_CERTS_PATH)
 
-        # Add user-provided env vars (these come last)
-        for env_var in args.env:
-            if "=" not in env_var:
-                print(
-                    f"Error: invalid environment variable format '{env_var}'. "
-                    f"Expected KEY=VALUE.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            key, value = env_var.split("=", 1)
-            env[key] = value
-
+        self._validate_bedrock_env(env)
         return env
 
-    def build_mounts(self, subcommand_config):
+    def build_mounts(self, subcommand_config, env_vars=None):
         """Build all mounts for the container."""
-        args = self.args
-        host_cwd = os.getcwd()
-        container_workspace = args.workspace_mount or host_cwd
+        mounts = list(self._static_mounts())
 
-        # Configure mounts as (host_path, container_path) tuples
-        mounts = [
-            # Container's .local directory
-            (
-                str(Path(args.container_local_host_dir).expanduser()),
-                "/home/devuser/.local",
-            ),
-            # Workspace
-            (host_cwd, container_workspace),
-        ]
-
-        # Add user-provided mounts
-        for mount_spec in args.mount:
-            host_path, container_path = self._parse_mount_spec(mount_spec)
-            mounts.append((host_path, container_path))
-
-        # Add conda env mount if needed (and outside workspace)
-        if args.conda_env:
-            conda_path = args.conda_env
-            if not self._is_path_inside_workspace(conda_path, host_cwd):
-                mounts.append((conda_path, conda_path))
-
-        if args.certs:
-            mounts.append((args.certs, CONTAINER_CERTS_PATH))
-
-        # Add credential mounts
         for tool in subcommand_config["credentials"]:
             mounts.extend(self._credential_mounts(tool))
 
-        return self._normalize_mounts(mounts)
+        if self._bedrock_enabled(env_vars or {}):
+            mounts.extend(self._credential_mounts("aws"))
+
+        normalized_mounts = self._normalize_mounts(mounts)
+        self._warn_nested_mounts(normalized_mounts)
+        return normalized_mounts
 
     def _normalize_mounts(self, mounts):
         """Deduplicate identical mounts and reject conflicting container paths."""
-        seen_mounts = set()
         container_targets = {}
         normalized = []
 
         for host_path, container_path in mounts:
-            mount_key = (host_path, container_path)
-            if mount_key in seen_mounts:
+            existing_host_path = container_targets.get(container_path)
+            if existing_host_path == host_path:
                 continue
 
-            existing_host_path = container_targets.get(container_path)
             if existing_host_path is not None and existing_host_path != host_path:
-                print(
-                    "Error: conflicting mounts for container path "
-                    f"'{container_path}': '{existing_host_path}' and '{host_path}'.",
-                    file=sys.stderr,
+                fatal(
+                    "conflicting mounts for container path "
+                    f"'{container_path}': '{existing_host_path}' and '{host_path}'."
                 )
-                sys.exit(1)
 
-            seen_mounts.add(mount_key)
             container_targets[container_path] = host_path
             normalized.append((host_path, container_path))
 
         return normalized
+
+    def _warn_nested_mounts(self, mounts):
+        """Warn when one container mount target nests inside another."""
+        for index, (host_path, container_path) in enumerate(mounts):
+            for other_host_path, other_container_path in mounts[index + 1 :]:
+                nested_container = self._nested_path_pair(
+                    PurePosixPath(container_path),
+                    PurePosixPath(other_container_path),
+                )
+
+                if not nested_container:
+                    continue
+
+                LOGGER.warning(
+                    "nested mounts detected between '%s:%s' and '%s:%s' "
+                    "(container paths '%s' and '%s'). "
+                    "Nested mounts can mask each other and cause confusing "
+                    "container behavior.",
+                    host_path,
+                    container_path,
+                    other_host_path,
+                    other_container_path,
+                    nested_container[0],
+                    nested_container[1],
+                )
+
+    def _nested_path_pair(self, first, second):
+        """Return (parent, child) when one path is nested inside the other."""
+        if first == second:
+            return None
+
+        if second.is_relative_to(first):
+            return str(first), str(second)
+
+        if first.is_relative_to(second):
+            return str(second), str(first)
+
+        return None
 
     def _credential_mounts(self, tool):
         """
@@ -483,6 +644,12 @@ class Launcher:
         Only returns paths that actually exist on the host.
         """
         mounts = []
+        if tool not in CREDENTIAL_PATHS:
+            known_tools = ", ".join(sorted(CREDENTIAL_PATHS))
+            fatal(
+                f"unknown credential config '{tool}'. "
+                f"Known credential configs: {known_tools}."
+            )
         paths = CREDENTIAL_PATHS[tool]
 
         for path_str in paths:
@@ -500,17 +667,16 @@ class Launcher:
             if host_path.exists():
                 mounts.append((str(host_path), container_path))
                 if self.args.verbose:
-                    print(f"Mounting credential: {path_str}", file=sys.stderr)
+                    LOGGER.info("Mounting credential: %s", path_str)
             elif self.args.verbose:
-                print(f"Skipping missing credential: {path_str}", file=sys.stderr)
+                LOGGER.info("Skipping missing credential: %s", path_str)
 
         return mounts
 
     def _parse_mount_spec(self, spec):
         """Parse mount spec: 'HOST' or 'HOST:CONTAINER'."""
         if not spec or spec == ":":
-            print(f"Error: invalid mount specification '{spec}'.", file=sys.stderr)
-            sys.exit(1)
+            fatal(f"invalid mount specification '{spec}'.")
 
         if ":" not in spec:
             # Single path: resolve it and use for both host and container
@@ -519,12 +685,10 @@ class Launcher:
         else:
             host, container = spec.split(":", 1)
             if not host or not container:
-                print(
-                    f"Error: invalid mount specification '{spec}'. "
-                    f"Both host and container paths must be non-empty.",
-                    file=sys.stderr,
+                fatal(
+                    f"invalid mount specification '{spec}'. "
+                    "Both host and container paths must be non-empty."
                 )
-                sys.exit(1)
             # Resolve only host path to absolute (can't resolve container path
             # unless inside container)
             host = str(Path(host).resolve())
@@ -535,30 +699,24 @@ class Launcher:
         """Main entry point for launching a container."""
         args = self.args
 
-        self.setup_host_paths()
-        self.setup_claude_config()
         if not args.dry_run:
+            self.setup_host_paths()
+            if args.cmd in {"claude", "shell"}:
+                self.setup_claude_config()
+            if args.cmd in {"pi", "shell"}:
+                self.setup_pi_config()
             self.backend.check_availability()
             self.backend.validate_image()
 
         # Config for this subcommand (claude, codex, shell)
         subcommand_config = SUBCOMMAND_CONFIG[args.cmd]
-
-        if subcommand_config.get("require_aws_profile"):
-            if not args.aws_profile:
-                print(
-                    f"Error: --aws-profile is required for {args.cmd}.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-
-        env_vars = self.build_env_vars(subcommand_config)
-        mounts = self.build_mounts(subcommand_config)
+        env_vars = self.build_env_vars()
+        mounts = self.build_mounts(subcommand_config, env_vars)
 
         # Build command args (subcommand command + any tool args from command line)
         # Special handling for shell: if args provided, use -c to execute them
         if args.cmd == "shell" and args.tool_args:
-            command_args = ["/bin/bash", "-c", " ".join(args.tool_args)]
+            command_args = ["/bin/bash", "-c", shlex.join(args.tool_args)]
         else:
             command_args = subcommand_config["command"] + args.tool_args
 
@@ -616,18 +774,6 @@ def build_parser():
         help="Override workspace path inside the container (default: same as host cwd)",
     )
 
-    # AWS configuration
-    parser.add_argument(
-        "--aws-region",
-        default=os.environ.get("AWS_REGION", "us-east-1"),
-        help="AWS region for Claude (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--aws-profile",
-        default=os.environ.get("AWS_PROFILE"),
-        help="AWS profile for Claude (default: %(default)s)",
-    )
-
     # Path configuration
     parser.add_argument(
         "--path-prepend",
@@ -639,10 +785,12 @@ def build_parser():
     )
     parser.add_argument(
         "--certs",
+        default=os.environ.get(DEFAULT_CERTS_ENV_VAR),
         help=(
             "Path to a PEM certificate bundle to mount into the container and "
             "export via SSL_CERT_FILE, REQUESTS_CA_BUNDLE, "
-            "NODE_EXTRA_CA_CERTS, and CURL_CA_BUNDLE"
+            "NODE_EXTRA_CA_CERTS, and CURL_CA_BUNDLE. "
+            f"Defaults to ${DEFAULT_CERTS_ENV_VAR} when set."
         ),
     )
 
@@ -673,22 +821,15 @@ def build_parser():
         help="Show verbose output including credential mount status",
     )
 
-    # Subcommands
-    subparsers = parser.add_subparsers(dest="cmd", required=True)
-
-    subparsers.add_parser(
-        "shell",
-        help="Launch an interactive bash shell",
+    parser.add_argument(
+        "cmd",
+        choices=tuple(SUBCOMMAND_CONFIG),
+        help="Tool to run inside the container",
     )
-
-    subparsers.add_parser(
-        "codex",
-        help="Run codex in the container",
-    )
-
-    subparsers.add_parser(
-        "claude",
-        help="Run claude in the container (requires --aws-profile)",
+    parser.add_argument(
+        "tool_args",
+        nargs=argparse.REMAINDER,
+        help=argparse.SUPPRESS,
     )
 
     return parser
@@ -696,17 +837,11 @@ def build_parser():
 
 def parse_args(argv):
     """Parse command-line arguments."""
-    parser = build_parser()
-    args, remainder = parser.parse_known_args(argv)
+    args = build_parser().parse_args(argv)
 
-    # All subcommands forward extra arguments
-    args.tool_args = remainder
-
-    # Resolve --sif-path relative to this script if it's a relative path
-    sif_path = Path(args.sif_path)
-    if not sif_path.is_absolute():
-        script_dir = Path(__file__).resolve().parent
-        args.sif_path = str(script_dir / sif_path)
+    # An optional separator can make the launcher/tool argument boundary clear.
+    if args.tool_args[:1] == ["--"]:
+        args.tool_args = args.tool_args[1:]
 
     return args
 

@@ -46,4 +46,4 @@ intersphinx_mapping = {
     "boto3": ("https://boto3.amazonaws.com/v1/documentation/api/latest", None),
 }
 
-pygments_style = "nord"
+pygments_style = "default"

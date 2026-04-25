@@ -4,7 +4,8 @@
 # This script demonstrates different ways to test the container environment:
 # 1. Shell mode (direct execution)
 # 2. Codex mode (ask AI to run and report)
-# 3. Claude mode (ask AI to run and report)
+# 3. Pi mode (ask AI to run and report)
+# 4. Claude mode (ask AI to run and report)
 
 set -euo pipefail
 
@@ -12,6 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LAUNCH_PY="$REPO_DIR/launch.py"
 DIAGNOSTICS_SCRIPT="$SCRIPT_DIR/container-diagnostics.sh"
+CONTAINER_DIAGNOSTICS_SCRIPT="/tmp/container-diagnostics.sh"
+PROMPT="Please run the script located at tests/container-diagnostics.sh using bash. Print the results EXACTLY. Then write a haiku based on this output"
 
 # Colors
 BLUE='\033[0;34m'
@@ -37,11 +40,12 @@ print_warning() {
 
 usage() {
     cat <<EOF
-Usage: $0 [options] <mode> [backend] [aws-profile]
+Usage: $0 [options] <mode> [backend]
 
 Modes:
   shell   - Run diagnostics directly in shell
   codex   - Ask Codex to run diagnostics and summarize
+  pi      - Ask Pi to run diagnostics and summarize
   claude  - Ask Claude to run diagnostics and summarize
   all     - Run all modes sequentially
 
@@ -52,21 +56,25 @@ Options:
                  Override podman image name passed to launch.py
   --sif-path PATH
                  Override singularity image path passed to launch.py
+  --non-interactive
+                 Skip confirmation prompts
   --help         Show this help
 
 Arguments:
   backend        podman (default) or singularity
-  aws-profile    AWS profile (default: from environment)
 
 Examples:
   # Run shell diagnostics with podman
   $0 shell
 
-  # Run Claude diagnostics with custom env var
-  $0 -e TEST_VAR=hello claude podman my-aws-profile
+  # Run Claude diagnostics with Bedrock enabled explicitly
+  $0 -e CLAUDE_CODE_USE_BEDROCK=1 -e AWS_PROFILE=my-aws-profile claude podman
+
+  # Run Pi diagnostics with Bedrock enabled explicitly
+  $0 -e PI_USE_BEDROCK=1 -e AWS_PROFILE=my-aws-profile pi podman
 
   # Run all diagnostics with singularity
-  $0 all singularity my-aws-profile
+  $0 -e CLAUDE_CODE_USE_BEDROCK=1 -e AWS_PROFILE=my-aws-profile all singularity
 EOF
     exit 0
 }
@@ -74,6 +82,7 @@ EOF
 # Parse options
 EXTRA_ARGS=()
 LAUNCH_ARGS=()
+NON_INTERACTIVE=0
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help)
@@ -95,6 +104,10 @@ while [[ $# -gt 0 ]]; do
             LAUNCH_ARGS+=(--sif-path "$2")
             shift 2
             ;;
+        --non-interactive)
+            NON_INTERACTIVE=1
+            shift
+            ;;
         *)
             break
             ;;
@@ -108,13 +121,13 @@ fi
 
 MODE="$1"
 BACKEND="${2:-podman}"
-AWS_PROFILE="${3:-}"
 
-# Build AWS profile arg if provided
-AWS_ARGS=()
-if [[ -n "$AWS_PROFILE" ]]; then
-    AWS_ARGS+=(--aws-profile "$AWS_PROFILE")
-fi
+wait_for_continue() {
+    if [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+        return
+    fi
+    read -r
+}
 
 run_shell_diagnostics() {
     print_header "Shell Mode: Direct Diagnostics"
@@ -125,66 +138,52 @@ run_shell_diagnostics() {
         --backend "$BACKEND" \
         ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"} \
         ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
+        --mount "$DIAGNOSTICS_SCRIPT:$CONTAINER_DIAGNOSTICS_SCRIPT" \
         shell \
-        "$DIAGNOSTICS_SCRIPT"
+        bash "$CONTAINER_DIAGNOSTICS_SCRIPT"
 }
 
 run_codex_diagnostics() {
     print_header "Codex Mode: AI-Assisted Diagnostics"
     print_warning "This will launch Codex and ask it to run diagnostics."
-    print_warning "Press Ctrl-C to cancel, or Enter to continue..."
-    read -r
     echo ""
 
-    local prompt="Please run the script located at tests/container-diagnostics.sh and provide a summary of the results. Specifically report:
-1. Is the container environment set up correctly?
-2. Are credentials mounted properly?
-3. Is the workspace writable?
-4. Are there any issues or warnings?
-
-For Codex, we expect ~/.aws and ~/.claude* to be missing, and AWS_REGION, AWS_PROFILE, and env vars starting with CLAUDE should be unset.
-
-Please run: bash tests/container-diagnostics.sh"
+    local prompt="Please run the script located at tests/container-diagnostics.sh. Print the results EXACTLY"
 
     python "$LAUNCH_PY" \
         --backend "$BACKEND" \
         ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"} \
         ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
         codex \
-        exec --sandbox danger-full-access "$prompt"
+        exec --sandbox danger-full-access "$PROMPT"
+}
+
+
+run_pi_diagnostics() {
+    print_header "Pi Mode: AI-Assisted Diagnostics"
+    print_warning "This will launch Pi and ask it to run diagnostics."
+    echo ""
+
+    python "$LAUNCH_PY" \
+        --backend "$BACKEND" \
+        ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"} \
+        ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
+        pi -p "$PROMPT"
 }
 
 run_claude_diagnostics() {
     print_header "Claude Mode: AI-Assisted Diagnostics"
 
-    if [[ -z "$AWS_PROFILE" ]]; then
-        echo "Error: AWS profile required for Claude mode"
-        echo "Usage: $0 claude [backend] <aws-profile>"
-        exit 1
-    fi
-
     print_warning "This will launch Claude and ask it to run diagnostics."
-    print_warning "Press Ctrl-C to cancel, or Enter to continue..."
-    read -r
     echo ""
 
-    local prompt="Please run the script located at tests/container-diagnostics.sh and provide a summary of the results. Specifically report:
-1. Is the container environment set up correctly?
-2. Are credentials mounted properly?
-3. Is the workspace writable?
-4. Are there any issues or warnings?
-
-For Claude, we expect ~/.codex to be missing.
-
-Please run: bash tests/container-diagnostics.sh"
 
     python "$LAUNCH_PY" \
         --backend "$BACKEND" \
         ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"} \
-        ${AWS_ARGS[@]+"${AWS_ARGS[@]}"} \
         ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
         claude --allowedTools 'Bash()' \
-        -p "$prompt"
+        -p "$PROMPT"
 }
 
 case "$MODE" in
@@ -194,6 +193,9 @@ case "$MODE" in
     codex)
         run_codex_diagnostics
         ;;
+    pi)
+        run_pi_diagnostics
+        ;;
     claude)
         run_claude_diagnostics
         ;;
@@ -201,11 +203,15 @@ case "$MODE" in
         run_shell_diagnostics
         echo ""
         print_info "Shell diagnostics complete. Press Enter to continue to Codex..."
-        read -r
+        wait_for_continue
         run_codex_diagnostics
         echo ""
-        print_info "Codex diagnostics complete. Press Enter to continue to Claude..."
-        read -r
+        print_info "Codex diagnostics complete. Press Enter to continue to Pi..."
+        wait_for_continue
+        run_pi_diagnostics
+        echo ""
+        print_info "Pi diagnostics complete. Press Enter to continue to Claude..."
+        wait_for_continue
         run_claude_diagnostics
         ;;
     *)

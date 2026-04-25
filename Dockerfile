@@ -5,7 +5,13 @@ ARG USERNAME=devuser
 ARG USER_UID=1000
 ARG USER_GID=1000
 ARG DEBIAN_FRONTEND=noninteractive
+ARG NODE_VERSION=22.22.2
+ARG TARGETARCH
+ARG TARGETPLATFORM
 
+# The following --mount... construct lets us pass in temporary secrets (here,
+# enterprise certs) at build time without letting them leak into the built
+# container
 RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
     APT_HTTPS_OPTS="$(if [ -f /run/secrets/mitm_ca_bundle.pem ]; then printf '%s' '-o Acquire::https::CaInfo=/run/secrets/mitm_ca_bundle.pem'; fi)" && \
     apt-get ${APT_HTTPS_OPTS} update && \
@@ -41,38 +47,46 @@ RUN groupadd -o --gid "${USER_GID}" "${USERNAME}" && \
     chmod 0440 "/etc/sudoers.d/${USERNAME}"
 
 # Detect architecture once and store mappings for later RUN commands
-RUN ARCH="$(dpkg --print-architecture)" && \
-  case "${ARCH}" in \
+RUN case "${TARGETARCH}" in \
     amd64) \
       echo 'AWS_ARCH=x86_64' >> /etc/arch.env && \
       echo 'CLAUDE_PLATFORM=linux-x64' >> /etc/arch.env && \
       echo 'CODEX_ASSET=codex-x86_64-unknown-linux-musl.tar.gz' >> /etc/arch.env && \
-      echo 'CODEX_BINARY=codex-x86_64-unknown-linux-musl' >> /etc/arch.env ;; \
+      echo 'CODEX_BINARY=codex-x86_64-unknown-linux-musl' >> /etc/arch.env && \
+      echo 'NODE_ARCH=x64' >> /etc/arch.env ;; \
     arm64) \
       echo 'AWS_ARCH=aarch64' >> /etc/arch.env && \
       echo 'CLAUDE_PLATFORM=linux-arm64' >> /etc/arch.env && \
       echo 'CODEX_ASSET=codex-aarch64-unknown-linux-musl.tar.gz' >> /etc/arch.env && \
-      echo 'CODEX_BINARY=codex-aarch64-unknown-linux-musl' >> /etc/arch.env ;; \
-    *) echo "Unsupported architecture: ${ARCH}" >&2; exit 1 ;; \
+      echo 'CODEX_BINARY=codex-aarch64-unknown-linux-musl' >> /etc/arch.env && \
+      echo 'NODE_ARCH=arm64' >> /etc/arch.env ;; \
+    *) echo "Unsupported architecture: ${TARGETPLATFORM}/${TARGETARCH}" >&2; exit 1 ;; \
   esac
 
-# Install AWS CLI v2
 RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
   export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
   if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
   export CURL_CA_BUNDLE && \
   . /etc/arch.env && \
+  \
+  # Install Node.js from the official upstream tarball. \
+  NODE_DISTRO="node-v${NODE_VERSION}-linux-${NODE_ARCH}" && \
+  NODE_TARBALL="${NODE_DISTRO}.tar.xz" && \
+  curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" -o /tmp/SHASUMS256.txt && \
+  curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}" -o /tmp/node.tar.xz && \
+  EXPECTED_SHA256="$(awk -v tarball="${NODE_TARBALL}" '$2 == tarball { print $1 }' /tmp/SHASUMS256.txt)" && \
+  test -n "${EXPECTED_SHA256}" && \
+  echo "${EXPECTED_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
+  tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner && \
+  rm -f /tmp/SHASUMS256.txt /tmp/node.tar.xz && \
+  \
+  # Install AWS CLI v2. \
   curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o /tmp/awscliv2.zip && \
   cd /tmp && unzip -q awscliv2.zip && \
   ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update && \
-  rm -rf /tmp/aws /tmp/awscliv2.zip
-
-# Install Claude CLI, using the download base URL parsed from the install script
-RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
-  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
-  if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
-  export CURL_CA_BUNDLE && \
-  . /etc/arch.env && \
+  rm -rf /tmp/aws /tmp/awscliv2.zip && \
+  \
+  # Install Claude CLI, using the download base URL parsed from the install script. \
   INSTALL_SCRIPT="$(curl -fsSL https://claude.ai/install.sh)" && \
   DOWNLOAD_BASE_URL="$(printf '%s' "${INSTALL_SCRIPT}" | grep -o 'DOWNLOAD_BASE_URL=\"[^\"]*\"' | head -1 | cut -d'"' -f2)" && \
   test -n "${DOWNLOAD_BASE_URL}" && \
@@ -82,21 +96,19 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   curl -fsSL "${DOWNLOAD_BASE_URL}/${CLAUDE_VERSION}/${CLAUDE_PLATFORM}/claude" -o /tmp/claude && \
   printf '%s  %s\n' "${CLAUDE_CHECKSUM}" /tmp/claude | sha256sum -c - && \
   install -m 0755 /tmp/claude /usr/local/bin/claude && \
-  rm -f /tmp/claude
-
-# Install Codex from the published GitHub release tarball.
-RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
-  export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
-  if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
-  export CURL_CA_BUNDLE && \
-  . /etc/arch.env && \
+  rm -f /tmp/claude && \
+  \
+  # Install Codex from the published GitHub release tarball. \
   CODEX_TAG="$(curl -fsSL https://api.github.com/repos/openai/codex/releases/latest | jq -r '.tag_name')" && \
   CODEX_VERSION="${CODEX_TAG#rust-v}" && \
   test -n "${CODEX_VERSION}" && \
   curl -fsSL "https://github.com/openai/codex/releases/download/${CODEX_TAG}/${CODEX_ASSET}" -o /tmp/codex.tar.gz && \
   tar -xzf /tmp/codex.tar.gz -C /tmp && \
   install -m 0755 "/tmp/${CODEX_BINARY}" /usr/local/bin/codex && \
-  rm -rf /tmp/codex.tar.gz "/tmp/${CODEX_BINARY}"
+  rm -rf /tmp/codex.tar.gz "/tmp/${CODEX_BINARY}" && \
+  \
+  # Install Pi. \
+  npm install -g @mariozechner/pi-coding-agent
 
 # Various env vars
 ENV DEVCONTAINER=true \
