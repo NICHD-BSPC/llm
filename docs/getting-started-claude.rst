@@ -1,8 +1,9 @@
 Getting started: Claude Code
 ============================
 
-This guide assumes you have completed the :ref:`start-codex` section and can
-run a Podman container locally as well as on a remote system.
+This guide assumes you have already completed the :doc:`getting-started-codex`
+section and can run Codex in a Podman container locally as well as on a remote
+system.
 
 :nih:`NIH-specific` At NIH, setting up Claude Code is more complicated than
 Codex because of the hosting mechanism and the login mechanism. Here, we
@@ -15,148 +16,44 @@ models in a similar fashion on STRIDES; that is not yet documented here.
 enrollment <https://cloud.nih.gov/enrollment/>`__.
 
 
-Initial setup
--------------
+Initial AWS SSO setup
+---------------------
 
 This first section needs to be done once to make sure accounts are connected
 and you can authenticate.
 
+1. **Set up AWS SSO.**  See :nih:`NIH-specific` :doc:`aws-sso` for the full
+   walkthrough. This includes setting up your group for access, installing AWS
+   CLI v2, and authenticating. You should be able to successfully log in with
+   :cmd:`aws sso login`.
 
-1. :nih:`NIH-specific` Submit a `Cloud Operations Support Request
-   <https://myitsm.nih.gov/nih_sd?id=nih_sd_sc_item&sys_id=db4dc8a91b41dc1001e9ea82f54bcb2c>`_
-   on ServiceNow to get the relevant accounts added to the AWS Identity Center,
-   which enables SSO. This requires a cloud admin. **This only needs to be done
-   once per group.** Include:
-
-   - AWS account name and number
-   - List of people: names, usernames, and emails
-   - Existing security group name to use, or the name of a new security group
-     for CIT to create with these users
-   - The role to assign users in the security group. We are currently using
-     ``NIH-AWS-PowerUser``, one of the standard roles set up in an AWS STRIDES
-     account.
-2. :nih:`NIH-specific` After answering any follow-up questions from CIT:
-
-   - CIT will either send each user an email directly or cause one to be sent
-     through AWS. The email will contain your username, a temporary password,
-     and a URL.
-   - Visit the URL, log in, change the password, and set up MFA.
-
-   .. tip::
-
-      :nih:`NIH-specific` You are complete with this phase when you can successfully log in to
-      https://nih.awsapps.com/start.
-
-3. **Install the AWS Command Line Interface (AWS CLI) Version
-   2** (`docs <https://aws.amazon.com/cli/>`_) on your local machine and ensure it is on your ``$PATH``.
-
-   - AWS CLI v2 is used to authenticate with AWS. Claude Code uses it to
-     refresh credentials whenever possible, and it is also useful for working
-     with API keys.
-   - If you already have it installed, make sure you are using version 2. See
-     the `v1 to v2 migration docs
-     <https://docs.aws.amazon.com/cli/latest/userguide/cliv2-migration.html>`_
-     if you need to upgrade.
-
-   .. tip::
-
-      You are complete with this phase when you open a new terminal, activate the
-      conda environment if needed, and run :cmd:`aws` to get:
-
-      .. code-block:: text
-
-         aws: [ERROR]: the following arguments are required: command
-
-4. **Run** :cmd:`aws configure sso` and respond as follows.
-
-   The items you need to type or paste are indicated with ``**`` below. Otherwise,
-   press Enter to accept defaults. The account number ``00001`` is a placeholder;
-   replace it with your actual account number in every command.
-
-   As part of this process, a browser window will open where you need to
-   authenticate.
-
-   .. code-block:: text
-
-      ** SSO session name (Recommended): aws-claude
-      ** SSO start URL [None]: https://nih.awsapps.com/start
-      ** SSO region [None]: us-east-1
-         SSO registration scopes [sso:account:access]:
-         Attempting to open your default browser.
-         If the browser does not open, open the following URL:
-
-         https://oidc.us-east-1.amazonaws.com/authorize?response_type=c.......
-
-         The only AWS account available to you is: 00001
-         Using the account ID 00001
-         The only role available to you is: AWSPowerUserAccess
-         Using the role name "AWSPowerUserAccess"
-      ** Default client Region [None]: us-east-1
-         CLI default output format (json if not specified) [None]:
-         Profile name [AWSPowerUserAccess-00001]:
-         To use this profile, specify the profile name using --profile, as shown:
-
-         aws sts get-caller-identity --profile AWSPowerUserAccess-00001
-
-   You can inspect the resulting config in :file:`~/.aws/config`.
-
-5. Run the command it suggests, again using your actual account number:
+2. Export these environment variables, for example in :file:`~/.bashrc`:
 
    .. code-block:: bash
 
-      aws sts get-caller-identity --profile AWSPowerUserAccess-00001
+      # Env vars that will be passed to Claude Code
+      export CLAUDE_CODE_USE_BEDROCK=1                  # Tells Claude to expect Bedrock
+      export CLAUDE_CODE_NO_FLICKER=1                   # Improves interface
+      export CLAUDE_CODE_DISABLE_AUTOUPDATER=1          # Don't autoupdate
+      export CLAUDE_CODE_DISABLE_INSTALLATION_CHECKS=1  # Don't check installation
 
-6. We want to use this profile by default, so export these environment
-   variables, for example in :file:`~/.bashrc`:
-
-   .. code-block:: bash
-
-      export CLAUDE_CODE_USE_BEDROCK=1
-      export CLAUDE_CODE_NO_FLICKER=1
-      export CLAUDE_CODE_DISABLE_AUTOUPDATER=1
-      export CLAUDE_CODE_DISABLE_INSTALLATION_CHECKS=1
-      export AWS_PROFILE="AWSPowerUserAccess-00001"
+      # These should have been exported already during the previous step
+      export AWS_PROFILE="AWSPowerUserAccess-00001"  # use your own account here
       export AWS_REGION=us-east-1
 
-   :cmd:`launch.py` inherits ``AWS_PROFILE`` and ``AWS_REGION`` from the host
-   environment. For a one-off override, pass them with ``--env``.
+.. tip::
 
-7. Source your shell config or open a new terminal, then run the same command
-   without explicitly specifying the profile:
-
-   .. code-block:: bash
-
-      aws sts get-caller-identity
-
-8. Now run :cmd:`aws sso login`. A browser should open, and if you've just done
-   the above steps, you should get a page indicating that you are already
-   authenticated.
-
-   .. tip::
-
-      You are complete with this phase when :cmd:`aws sso login` opens the browser
-      and you get the confirmation.
-
-.. note::
-
-  To inspect your current credentials, including expiration time, run:
-
-  .. code-block:: bash
-
-     aws configure export-credentials
-
-  If you ever need to refresh credentials manually, run:
-
-  .. code-block:: bash
-
-     aws sso login
-
-  :nih:`NIH-specific` You will likely need to re-run :cmd:`aws sso login` (or use
-  the :cmd:`refresh.py` script) every 8 hrs.
+  You are complete with this phase when :cmd:`aws sso login` opens the browser
+  and you get the confirmation, and running :cmd:`echo
+  $CLAUDE_CODE_USE_BEDROCK` gives ``1``.
 
 
 Claude Code locally (Podman container)
 --------------------------------------
+
+Since we're using AWS SSO to authenticate, **we do not need to install Claude
+Code locally**. This is in contrast to Codex, which we had to install locally in
+order to be able to use `codex login`.
 
 1. On a local Mac, ensure you have Podman Desktop installed and running and
    that you are in a directory you are comfortable giving Claude access to.
@@ -172,7 +69,8 @@ Claude Code locally (Podman container)
    - :cmd:`launch.py` detected that you're running on a Mac and that Podman is the
      right container runtime
    - If you didn't have any previous Claude Code config, it created
-     a :file:`~/.claude.json` file with an empty JSON array (``{}``)
+     a :file:`~/.claude.json` file with an empty JSON array (``{}``) and/or an
+     empty :file:`~/.claude` directory.
    - The default podman image was downloaded if needed, a container was created
    - The :file:`~/.claude.json` file and any existing :file:`~/.claude` directory was mounted into the container
    - Host variables starting with ``CLAUDE_CODE`` were passed through to the container
@@ -215,10 +113,12 @@ Claude Code remote (Singularity)
      ``CLAUDE_CODE_USE_BEDROCK=1``, that includes host ``AWS_*`` variables and
      :file:`~/.aws`.
 
+Session timeout
+---------------
 
-Next steps
-----------
+Your AWS credentials will eventually time out, and when this happens Claude Code will have connection issues. If this happens mid-session, you can run :cmd:`refresh.py` on your local machine, with the ``--remote`` argument if your session is on a remote system.
 
-Claude Code can be configured to run this automatically whenever authentication
-times out, so you should not need to run :cmd:`aws sso login` manually in that
-context. See :doc:`claude-config`.
+This will update the credentials files in place, and since they are mounted
+"live" into the container, the running Claude Code session will see the update,
+and will be able to connect on the next prompt submission.
+
