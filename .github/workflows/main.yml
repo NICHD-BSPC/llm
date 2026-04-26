@@ -16,6 +16,11 @@ on:
 jobs:
   podman-build:
     runs-on: ubuntu-latest
+    outputs:
+      claude_version: ${{ steps.versions.outputs.claude_version }}
+      codex_version: ${{ steps.versions.outputs.codex_version }}
+      pi_version: ${{ steps.versions.outputs.pi_version }}
+      combo_tag: ${{ steps.versions.outputs.combo_tag }}
     permissions:
       contents: read
       packages: write
@@ -36,7 +41,24 @@ jobs:
           sudo apt-get install -y podman
 
       - name: Build container image
-        run: python3 build.py
+        run: |
+          python3 build.py \
+            --arch linux/amd64 \
+            --image-name "${PODMAN_IMAGE_NAME}" \
+            --repository-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+
+      - name: Resolve installed tool versions
+        id: versions
+        run: |
+          claude_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" sh -lc "claude --version | sed -E 's/^([0-9][^ ]*).*/\\1/'")"
+          codex_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" sh -lc "codex --version | awk '{print \\$2}'")"
+          pi_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" pi --version | tr -d '\r')"
+          {
+            echo "claude_version=${claude_version}"
+            echo "codex_version=${codex_version}"
+            echo "pi_version=${pi_version}"
+            echo "combo_tag=claude-${claude_version}-codex-${codex_version}-pi-${pi_version}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Run shell diagnostics
         run: |
@@ -49,7 +71,8 @@ jobs:
           id
           ls -ld "$HOME/.codex" "$HOME/.claude" "$HOME/.aws" || true
           ls -l "$HOME/.claude.json" || true
-          python3 launch.py --verbose --dry-run --backend podman --image-name "${PODMAN_IMAGE_NAME}" shell tests/container-diagnostics.sh 2>&1 | tee -a "$log_file"
+          image_name="${PODMAN_IMAGE_NAME}"
+          python3 launch.py --verbose --dry-run --backend podman --image-name "${image_name}" shell tests/container-diagnostics.sh 2>&1 | tee -a "$log_file"
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             exit "$status"
@@ -57,19 +80,19 @@ jobs:
 
           # the launch script uses `-it` when running the container, but this
           # test is not running in a TTY. So we fake it with `script`.
-          script -q -e -c "bash tests/run-diagnostics.sh --image-name ${PODMAN_IMAGE_NAME} shell podman" /dev/null 2>&1 | tee -a "$log_file"
+          script -q -e -c "bash tests/run-diagnostics.sh --image-name ${image_name} shell podman" /dev/null 2>&1 | tee -a "$log_file"
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             exit "$status"
           fi
 
-          AWS_PROFILE=example AWS_REGION=us-east-1 CLAUDE_CODE_USE_BEDROCK=1 script -q -e -c "bash tests/run-diagnostics.sh --image-name ${PODMAN_IMAGE_NAME} shell podman" /dev/null 2>&1 | tee -a "$log_file"
+          AWS_PROFILE=example AWS_REGION=us-east-1 CLAUDE_CODE_USE_BEDROCK=1 script -q -e -c "bash tests/run-diagnostics.sh --image-name ${image_name} shell podman" /dev/null 2>&1 | tee -a "$log_file"
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             exit "$status"
           fi
 
-          AWS_PROFILE=example AWS_REGION=us-east-1 PI_USE_BEDROCK=1 script -q -e -c "bash tests/run-diagnostics.sh --image-name ${PODMAN_IMAGE_NAME} shell podman" /dev/null 2>&1 | tee -a "$log_file"
+          AWS_PROFILE=example AWS_REGION=us-east-1 PI_USE_BEDROCK=1 script -q -e -c "bash tests/run-diagnostics.sh --image-name ${image_name} shell podman" /dev/null 2>&1 | tee -a "$log_file"
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             exit "$status"
@@ -89,18 +112,23 @@ jobs:
         run: |
           repo_lc="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           image_base="${{ env.REGISTRY }}/${repo_lc}"
+          image_name="${PODMAN_IMAGE_NAME}"
           sha_tag="sha-${GITHUB_SHA}"
+          combo_tag="${{ steps.versions.outputs.combo_tag }}"
 
-          podman tag localhost/llm-devcontainer:latest "${image_base}:${sha_tag}"
+          podman tag "${image_name}" "${image_base}:${sha_tag}"
           podman push "${image_base}:${sha_tag}"
+          podman tag "${image_name}" "${image_base}:${combo_tag}"
+          podman push "${image_base}:${combo_tag}"
 
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            podman tag localhost/llm-devcontainer:latest "${image_base}:latest"
+            podman tag "${image_name}" "${image_base}:latest"
             podman push "${image_base}:latest"
           fi
 
   singularity-build:
     runs-on: ubuntu-latest
+    needs: podman-build
     permissions:
       contents: read
       packages: write
@@ -132,7 +160,11 @@ jobs:
 
       - name: Build Podman image
         run: |
-          python3 build.py
+          python3 build.py \
+            --repository-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --claude-version "${{ needs.podman-build.outputs.claude_version }}" \
+            --codex-version "${{ needs.podman-build.outputs.codex_version }}" \
+            --pi-version "${{ needs.podman-build.outputs.pi_version }}"
 
       - name: Export Podman image as docker archive
         run: |

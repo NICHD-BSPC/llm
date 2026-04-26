@@ -6,8 +6,15 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 ARG DEBIAN_FRONTEND=noninteractive
 ARG NODE_VERSION=22.22.2
+ARG CLAUDE_VERSION=
+ARG CODEX_VERSION=
+ARG PI_VERSION=
+ARG REPOSITORY_URL=https://github.com/nichd-bspc/llm
 ARG TARGETARCH
 ARG TARGETPLATFORM
+
+LABEL org.opencontainers.image.source="${REPOSITORY_URL}" \
+      org.opencontainers.image.description="LLM agent container with Claude Code, Codex, and Pi"
 
 # The following --mount... construct lets us pass in temporary secrets (here,
 # enterprise certs) at build time without letting them leak into the built
@@ -90,7 +97,7 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   INSTALL_SCRIPT="$(curl -fsSL https://claude.ai/install.sh)" && \
   DOWNLOAD_BASE_URL="$(printf '%s' "${INSTALL_SCRIPT}" | grep -o 'DOWNLOAD_BASE_URL=\"[^\"]*\"' | head -1 | cut -d'"' -f2)" && \
   test -n "${DOWNLOAD_BASE_URL}" && \
-  CLAUDE_VERSION="$(curl -fsSL "${DOWNLOAD_BASE_URL}/latest")" && \
+  if [ -z "${CLAUDE_VERSION}" ]; then CLAUDE_VERSION="$(curl -fsSL "${DOWNLOAD_BASE_URL}/latest")"; fi && \
   CLAUDE_CHECKSUM="$(curl -fsSL "${DOWNLOAD_BASE_URL}/${CLAUDE_VERSION}/manifest.json" | jq -r --arg platform "${CLAUDE_PLATFORM}" '.platforms[$platform].checksum // empty')" && \
   test -n "${CLAUDE_CHECKSUM}" && \
   curl -fsSL "${DOWNLOAD_BASE_URL}/${CLAUDE_VERSION}/${CLAUDE_PLATFORM}/claude" -o /tmp/claude && \
@@ -99,8 +106,7 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   rm -f /tmp/claude && \
   \
   # Install Codex from the published GitHub release tarball. \
-  CODEX_TAG="$(curl -fsSL https://api.github.com/repos/openai/codex/releases/latest | jq -r '.tag_name')" && \
-  CODEX_VERSION="${CODEX_TAG#rust-v}" && \
+  if [ -z "${CODEX_VERSION}" ]; then CODEX_TAG="$(curl -fsSL https://api.github.com/repos/openai/codex/releases/latest | jq -r '.tag_name')"; CODEX_VERSION="${CODEX_TAG#rust-v}"; else CODEX_TAG="rust-v${CODEX_VERSION}"; fi && \
   test -n "${CODEX_VERSION}" && \
   curl -fsSL "https://github.com/openai/codex/releases/download/${CODEX_TAG}/${CODEX_ASSET}" -o /tmp/codex.tar.gz && \
   tar -xzf /tmp/codex.tar.gz -C /tmp && \
@@ -108,7 +114,12 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   rm -rf /tmp/codex.tar.gz "/tmp/${CODEX_BINARY}" && \
   \
   # Install Pi. \
-  npm install -g @mariozechner/pi-coding-agent
+  if [ -n "${PI_VERSION}" ]; then npm install -g "@mariozechner/pi-coding-agent@${PI_VERSION}"; else npm install -g @mariozechner/pi-coding-agent; fi && \
+  install -d /usr/local/share/llm && \
+  ACTUAL_CLAUDE_VERSION="$(claude --version | sed -E 's/^([0-9][^ ]*).*/\1/')" && \
+  ACTUAL_CODEX_VERSION="$(codex --version | awk '{print $2}')" && \
+  ACTUAL_PI_VERSION="$(pi --version | tr -d '\r')" && \
+  printf 'CLAUDE_VERSION=%s\nCODEX_VERSION=%s\nPI_VERSION=%s\n' "${ACTUAL_CLAUDE_VERSION}" "${ACTUAL_CODEX_VERSION}" "${ACTUAL_PI_VERSION}" > /usr/local/share/llm/tool-versions.env
 
 # Various env vars
 ENV DEVCONTAINER=true \
