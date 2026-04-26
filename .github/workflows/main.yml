@@ -50,8 +50,8 @@ jobs:
       - name: Resolve installed tool versions
         id: versions
         run: |
-          claude_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" sh -lc "claude --version | sed -E 's/^([0-9][^ ]*).*/\\1/'")"
-          codex_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" sh -lc "codex --version | awk '{print \\$2}'")"
+          claude_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" claude --version | sed -E 's/^([0-9][^ ]*).*/\1/')"
+          codex_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" codex --version | awk '{print $2}')"
           pi_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" pi --version | tr -d '\r')"
           {
             echo "claude_version=${claude_version}"
