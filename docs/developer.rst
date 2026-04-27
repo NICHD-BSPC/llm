@@ -26,6 +26,24 @@ When running :cmd:`build.py`:
   emulation, which is usually acceptable because CPU is not the bottleneck.
   Change it with ``--arch``.
 - Cache is used by default. To force a fresh rebuild, use ``--no-cache``.
+- If you do not pass explicit tool versions, the image installs the latest
+  available Claude Code, Codex, and Pi releases. The container records the
+  installed versions in ``/usr/local/share/llm/tool-versions.env``.
+
+GitHub Actions publishes the Podman image to GHCR with these tags:
+
+- ``sha-<git sha>``
+- ``latest`` on ``main``
+- ``claude-<version>-codex-<version>-pi-<version>``
+
+The GitHub Actions container workflow builds ``linux/amd64`` images only. It
+first builds and tests the Podman image, then derives the version tag by
+running the built container and reading ``claude --version``, ``codex
+--version``, and ``pi --version``. The Singularity phase then converts that
+same tested Podman image into a SIF artifact.
+
+The workflow also sets ``org.opencontainers.image.source`` to the GitHub
+repository URL so the GHCR package stays linked to the repository.
 
 .. tip::
 
