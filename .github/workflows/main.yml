@@ -54,12 +54,10 @@ jobs:
           claude_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" claude --version | sed -E 's/^([0-9][^ ]*).*/\1/')"
           codex_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" codex --version | awk '{print $2}')"
           pi_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" pi --version | tr -d '\r')"
-          combo_tag="claude-${claude_version}-codex-${codex_version}-pi-${pi_version}"
           {
             echo "CLAUDE_VERSION=${claude_version}"
             echo "CODEX_VERSION=${codex_version}"
             echo "PI_VERSION=${pi_version}"
-            echo "COMBO_TAG=${combo_tag}"
           } >> "${GITHUB_ENV}"
 
       - name: Run Podman shell diagnostics
@@ -106,8 +104,12 @@ jobs:
 
           podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:${sha_tag}"
           podman push "${image_base}:${sha_tag}"
-          podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:${COMBO_TAG}"
-          podman push "${image_base}:${COMBO_TAG}"
+          podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:claude-${CLAUDE_VERSION}"
+          podman push "${image_base}:claude-${CLAUDE_VERSION}"
+          podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:codex-${CODEX_VERSION}"
+          podman push "${image_base}:codex-${CODEX_VERSION}"
+          podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:pi-${PI_VERSION}"
+          podman push "${image_base}:pi-${PI_VERSION}"
 
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
             podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:latest"
