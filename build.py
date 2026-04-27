@@ -134,7 +134,11 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     no_cache_args = ["--no-cache"] if args.no_cache else []
-    provided_versions = (args.claude_version, args.codex_version, args.pi_version)
+    provided_versions = (
+        args.claude_version or None,
+        args.codex_version or None,
+        args.pi_version or None,
+    )
 
     if all(provided_versions):
         tool_versions = {
