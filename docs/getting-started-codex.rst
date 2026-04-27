@@ -13,11 +13,9 @@ Step 1: Codex locally (native)
 ------------------------------
 
 The minimal first step is to confirm that the Codex CLI works locally (without
-a container).
-
-Even if you are not planning on calling models from Codex outside
-of a container, it still needs to be set up because we need it to refresh login
-credentials.
+a container). Even if you only planning on calling models from Codex inside
+a container, this native version still needs to be set up because we need it to
+refresh login credentials.
 
 1. Install `Codex CLI <https://developers.openai.com/codex/cli>`__ on your local machine.
 2. Navigate to a directory you are comfortable letting Codex see. (this will
@@ -26,12 +24,13 @@ credentials.
 4. When Codex starts, select the first login option. This opens a browser
    for single sign-on. Codex waits in the background while you log in.
 5. After successful login, the running Codex instance detects the login
-   automatically.
-6. Type in a prompt (even just the word "testing") and things are working if
-   model responds.
+   automatically. It will then ask for permission to work in the current
+   directory.
+6. Type in a prompt (even just the word "testing"). It's working if the model
+   responds.
 7. Ctrl-C twice, or :cmd:`/exit` to quit.
-8. Start Codex again. You should not need to log in, and submitting a test
-   prompt should again work.
+8. Start Codex again. This time you should not need to log in, and submitting
+   a test prompt should again work.
 
 .. details:: What did this do?
 
@@ -47,9 +46,14 @@ credentials.
 Step 2: Codex locally (podman container)
 ----------------------------------------
 
-Running Codex as above still can allow read access to your entire computer.
-While updates to Codex are improving the sandboxing capabilities, running in
-a container helps isolate further by only mounting what is needed into the container.
+Running Codex natively as above still can allow read access to your entire
+computer. While updates to Codex are improving the sandboxing capabilities,
+running in a container helps isolate further by only mounting what is needed
+into the container.
+
+Since we are using the container as our isolation mechanism, we can then run
+Codex with more permissive settings when inside the container (in fact, the
+Codex sandbox doesn't work inside a container).
 
 After confirming you have a local native instance of Codex working as described
 above, do the following:

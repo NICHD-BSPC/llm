@@ -9,18 +9,18 @@ So, this repo supports:
 
 - `Codex CLI <https://developers.openai.com/codex/cli>`__, using models hosted by OpenAI enterprise using `ChatGPT Enterprise <https://openai.com/chatgpt/enterprise/>`__ authentication
 - `Claude Code CLI <https://code.claude.com/docs/en/overview>`__, using models hosted by `Amazon Bedrock <https://aws.amazon.com/bedrock/>`__ using `AWS SSO <https://aws.amazon.com/iam/identity-center/>`__
-- `Pi coding agent <https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent>`__, using models hosted by Amazon Bedrock using AWS SSO.
+- `Pi coding agent <https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent>`__, also using models hosted by Amazon Bedrock using AWS SSO.
 
 **Multiple container runtimes**
 
-- `Podman <https://podman.io/>`__, for running on a local Mac
-- `Singularity <https://docs.sylabs.io/guides/latest/user-guide/>`__, for running on a Linux HPC system
+- `Podman <https://podman.io/>`__ images, for running containers on a local Mac
+- `Singularity <https://docs.sylabs.io/guides/latest/user-guide/>`__ images, for running containers on a Linux HPC system
 
 **Tools**
 
-- :cmd:`refresh.py` to refresh your credentials and optionally push them to a remote system
-- :cmd:`launch.py` to launch a container running the LLM tool
-- :cmd:`build.py` to build container images (only required if you want to build your own; you can use our hosted images)
+- ``refresh.py`` to refresh your credentials and optionally push them to a remote system
+- ``launch.py`` to launch a container running the LLM tool
+- ``build.py`` to build container images (only required if you want to build your own; you can use our hosted images)
 
 **Additional features**
 

@@ -34,10 +34,12 @@ GitHub Actions publishes the Podman image to GHCR with these tags:
 
 - ``sha-<git sha>``
 - ``latest`` on ``main``
-- ``claude-<version>-codex-<version>-pi-<version>``
+- ``claude-<version>``
+- ``codex-<version>``
+- ``pi-<version>``
 
 The GitHub Actions container workflow builds ``linux/amd64`` images only. It
-first builds and tests the Podman image, then derives the version tag by
+first builds and tests the Podman image, then derives the version tags by
 running the built container and reading ``claude --version``, ``codex
 --version``, and ``pi --version``. The Singularity phase then converts that
 same tested Podman image into a SIF artifact.

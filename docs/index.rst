@@ -37,3 +37,4 @@ Contents
    bedrock-keys
    tips
    developer
+   ai-disclosure

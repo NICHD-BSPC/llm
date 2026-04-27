@@ -30,7 +30,7 @@ Two main ways of getting them.
 
       git clone https://github.com/nichd-bspc/llm ~/llm
 
-2. Manually download them, say to a :file:`~/bin` directory:
+2. Or manually download them, say to a :file:`~/bin` directory:
 
    .. code-block:: bash
 
@@ -44,11 +44,12 @@ Two main ways of getting them.
       chmod +x ~/bin/launch.py
 
 Then either call them directly with the full path name, or add them to your
-``PATH``. For example,
+``PATH``. For example, if you cloned the repo to your ome directory, you would
+add this to your :file:`~/.bashrc` (or wherever you set your ``$PATH``
+variable):
 
 .. code-block:: bash
 
-   # in e.g. ~/.bashrc
    export PATH="$PATH:~/llm"
 
 .. tip::

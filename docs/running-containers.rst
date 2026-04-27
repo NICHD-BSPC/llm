@@ -200,8 +200,8 @@ to specify additional things as well.
 
 .. _container-notes-persistent-mounts:
 
-Persistent mounts and config
-----------------------------
+Mounts and config
+-----------------
 
 Files and directories on the host can be mounted into a container to
 selectively make them available inside the otherwise isolated environment.
@@ -209,13 +209,8 @@ selectively make them available inside the otherwise isolated environment.
 The host home directory is not mounted. Even though Singularity mounts it by
 default, this setup disables that behavior to reduce exposure.
 
-Some tools still need a home directory inside the container. In this repo, the
-container user's home points to a stable host-backed location under
-:file:`~/.local/share/llm-devcontainer/home`. That gives the container a persistent
-home across runs without exposing the entire host home directory.
-
 The user inside the container is called `devuser`, and the home directory is
-created at `/home/devuser` inside the container.
+created at `/home/devuser` inside the container image.
 
 :cmd:`launch.py` mounts a small set of host config and credential paths into
 the container, depending on the subcommand. See :doc:`config-files` for the
