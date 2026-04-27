@@ -298,33 +298,31 @@ class Launcher:
                     "use a workspace-relative path."
                 )
 
-    def setup_host_paths(self):
-        """Create necessary host directories before launch."""
-        local_dir = Path(self.args.container_local_host_dir).expanduser()
-        local_dir.mkdir(parents=True, exist_ok=True)
-        (local_dir / "bin").mkdir(parents=True, exist_ok=True)
+    def setup_codex_config(self):
+        """Create default ~/.codex dir"""
+        codex_dir = Path.home() / ".codex"
+        if not codex_dir.exists():
+            codex_dir.mkdir(parents=True, exist_ok=True)
+            LOGGER.info("Created directory: %", codex_dir)
 
     def setup_claude_config(self):
         """Create default ~/.claude.json and ~/.claude/ if needed to prevent Claude Code from hanging."""
         claude_dir = Path.home() / ".claude"
         if not claude_dir.exists():
             claude_dir.mkdir(parents=True, exist_ok=True)
-            if self.args.verbose:
-                LOGGER.info("Created directory: %s", claude_dir)
+            LOGGER.info("Created directory: %s", claude_dir)
 
         claude_config = Path.home() / ".claude.json"
         if not claude_config.exists():
             claude_config.write_text("{}\n")
-            if self.args.verbose:
-                LOGGER.info("Created default config: %s", claude_config)
+            LOGGER.info("Created default config: %s", claude_config)
 
     def setup_pi_config(self):
         """Create pi dirs if needed"""
         pi_dir = Path.home() / ".pi"
         if not pi_dir.exists():
             pi_dir.mkdir(parents=True, exist_ok=True)
-            if self.args.verbose:
-                LOGGER.info("Created directory: %s", pi_dir)
+            LOGGER.info("Created directory: %s", pi_dir)
 
     def _check_conda_env_arch(self, conda_path):
         """Fail if the env's python is a Mach-O binary (won't run in Linux container)."""
