@@ -53,7 +53,7 @@ jobs:
         run: |
           claude_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" claude --version | sed -E 's/^([0-9][^ ]*).*/\1/')"
           codex_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" codex --version | awk '{print $2}')"
-          pi_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" pi --version | tr -d '\r')"
+          pi_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" pi --version 2>&1 | tr -d '\r')"
           {
             echo "CLAUDE_VERSION=${claude_version}"
             echo "CODEX_VERSION=${codex_version}"
