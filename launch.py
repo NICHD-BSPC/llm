@@ -211,20 +211,12 @@ class SingularityBackend(Backend):
     def build_command(self, env_vars, mounts, command_args):
         args = self.args
 
-        container_env = dict(env_vars)
-        home_dir = container_env.pop("HOME", None)
-        env_args = self.build_env_args(container_env)
+        env_args = self.build_env_args(env_vars)
         mount_args = self.build_mount_args(mounts)
-        home_arg = []
-
-        if home_dir:
-            host_home = str(Path(args.container_local_host_dir).expanduser().parent)
-            home_arg = ["--home", f"{host_home}:{home_dir}"]
 
         # fmt: off
         return [
             self.command, "exec",
-            *home_arg,
             *env_args,
             *mount_args,
             "--cleanenv",
@@ -412,10 +404,6 @@ class Launcher:
         container_workspace = args.workspace_mount or host_cwd
 
         mounts = [
-            (
-                str(Path(args.container_local_host_dir).expanduser()),
-                "/home/devuser/.local",
-            ),
             (host_cwd, container_workspace),
         ]
 
@@ -700,7 +688,6 @@ class Launcher:
         args = self.args
 
         if not args.dry_run:
-            self.setup_host_paths()
             if args.cmd in {"claude", "shell"}:
                 self.setup_claude_config()
             if args.cmd in {"pi", "shell"}:
@@ -760,12 +747,6 @@ def build_parser():
         "--sif-path",
         default=DEFAULT_SINGULARITY_IMAGE,
         help="Singularity image path. Relative paths resolved relative to this script (default: %(default)s)",
-    )
-
-    parser.add_argument(
-        "--container-local-host-dir",
-        default=str(Path.home() / ".local/share/llm-devcontainer/home/.local"),
-        help="Host directory mounted as container's ~/.local (default: %(default)s)",
     )
 
     # Workspace
