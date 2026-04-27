@@ -14,121 +14,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  podman-build:
+  build-and-test:
     runs-on: ubuntu-latest
-    outputs:
-      claude_version: ${{ steps.versions.outputs.claude_version }}
-      codex_version: ${{ steps.versions.outputs.codex_version }}
-      pi_version: ${{ steps.versions.outputs.pi_version }}
-      combo_tag: ${{ steps.versions.outputs.combo_tag }}
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      # Pyhon required for running the launch and build scripts
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install Podman
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y podman
-
-      - name: Build container image
-        run: |
-          python3 build.py \
-            --arch linux/amd64 \
-            --image-name "${PODMAN_IMAGE_NAME}" \
-            --repository-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
-
-      - name: Resolve installed tool versions
-        id: versions
-        run: |
-          claude_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" claude --version | sed -E 's/^([0-9][^ ]*).*/\1/')"
-          codex_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" codex --version | awk '{print $2}')"
-          pi_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" pi --version | tr -d '\r')"
-          {
-            echo "claude_version=${claude_version}"
-            echo "codex_version=${codex_version}"
-            echo "pi_version=${pi_version}"
-            echo "combo_tag=claude-${claude_version}-codex-${codex_version}-pi-${pi_version}"
-          } >> "${GITHUB_OUTPUT}"
-
-      - name: Run shell diagnostics
-        run: |
-          set -o pipefail
-          log_file="$(mktemp)"
-          mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache"
-          touch "$HOME/.codex/auth.json" "$HOME/.claude/settings.json" "$HOME/.claude.json" "$HOME/.aws/config"
-
-          echo "HOME=$HOME"
-          id
-          ls -ld "$HOME/.codex" "$HOME/.claude" "$HOME/.aws" || true
-          ls -l "$HOME/.claude.json" || true
-          image_name="${PODMAN_IMAGE_NAME}"
-          python3 launch.py --verbose --dry-run --backend podman --image-name "${image_name}" shell tests/container-diagnostics.sh 2>&1 | tee -a "$log_file"
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            exit "$status"
-          fi
-
-          # the launch script uses `-it` when running the container, but this
-          # test is not running in a TTY. So we fake it with `script`.
-          script -q -e -c "bash tests/run-diagnostics.sh --image-name ${image_name} shell podman" /dev/null 2>&1 | tee -a "$log_file"
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            exit "$status"
-          fi
-
-          AWS_PROFILE=example AWS_REGION=us-east-1 CLAUDE_CODE_USE_BEDROCK=1 script -q -e -c "bash tests/run-diagnostics.sh --image-name ${image_name} shell podman" /dev/null 2>&1 | tee -a "$log_file"
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            exit "$status"
-          fi
-
-          AWS_PROFILE=example AWS_REGION=us-east-1 PI_USE_BEDROCK=1 script -q -e -c "bash tests/run-diagnostics.sh --image-name ${image_name} shell podman" /dev/null 2>&1 | tee -a "$log_file"
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            exit "$status"
-          fi
-
-          if grep -q '✗' "$log_file"; then
-            echo "Diagnostics output contained a failure marker (✗)." >&2
-            exit 1
-          fi
-
-      - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login "${{ env.REGISTRY }}" -u "${{ github.actor }}" --password-stdin
-
-      - name: Push Podman image to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        run: |
-          repo_lc="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
-          image_base="${{ env.REGISTRY }}/${repo_lc}"
-          image_name="${PODMAN_IMAGE_NAME}"
-          sha_tag="sha-${GITHUB_SHA}"
-          combo_tag="${{ steps.versions.outputs.combo_tag }}"
-
-          podman tag "${image_name}" "${image_base}:${sha_tag}"
-          podman push "${image_base}:${sha_tag}"
-          podman tag "${image_name}" "${image_base}:${combo_tag}"
-          podman push "${image_base}:${combo_tag}"
-
-          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            podman tag "${image_name}" "${image_base}:latest"
-            podman push "${image_base}:latest"
-          fi
-
-  singularity-build:
-    runs-on: ubuntu-latest
-    needs: podman-build
     permissions:
       contents: read
       packages: write
@@ -147,24 +34,86 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl podman
 
+      - name: Install Apptainer
+        run: |
           curl -fsSL \
             -o /tmp/apptainer.deb \
             "https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/apptainer_${APPTAINER_VERSION}_amd64.deb"
           sudo apt-get install -y /tmp/apptainer.deb
           sudo ln -sf "$(command -v apptainer)" /usr/local/bin/singularity
 
-      - name: Verify Apptainer install
-        run: |
-          apptainer --version
-          singularity --version
-
       - name: Build Podman image
         run: |
           python3 build.py \
-            --repository-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            --claude-version "${{ needs.podman-build.outputs.claude_version }}" \
-            --codex-version "${{ needs.podman-build.outputs.codex_version }}" \
-            --pi-version "${{ needs.podman-build.outputs.pi_version }}"
+            --arch linux/amd64 \
+            --image-name "${PODMAN_IMAGE_NAME}" \
+            --repository-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+
+      - name: Resolve installed tool versions
+        run: |
+          claude_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" claude --version | sed -E 's/^([0-9][^ ]*).*/\1/')"
+          codex_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" codex --version | awk '{print $2}')"
+          pi_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" pi --version | tr -d '\r')"
+          combo_tag="claude-${claude_version}-codex-${codex_version}-pi-${pi_version}"
+          {
+            echo "CLAUDE_VERSION=${claude_version}"
+            echo "CODEX_VERSION=${codex_version}"
+            echo "PI_VERSION=${pi_version}"
+            echo "COMBO_TAG=${combo_tag}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Run Podman shell diagnostics
+        run: |
+          set -o pipefail
+          log_file="$(mktemp)"
+          mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache"
+          touch "$HOME/.codex/auth.json" "$HOME/.claude/settings.json" "$HOME/.claude.json" "$HOME/.aws/config"
+
+          run_diagnostics() {
+            # launch.py uses `-it` when running the container, but this test is
+          # not running in a TTY. So we fake one with `script`.
+            script -q -e -c "$1" /dev/null 2>&1 | tee -a "$log_file"
+            status=${PIPESTATUS[0]}
+            if [ "$status" -ne 0 ]; then
+              exit "$status"
+            fi
+          }
+
+          echo "HOME=$HOME"
+          id
+          ls -ld "$HOME/.codex" "$HOME/.claude" "$HOME/.aws" || true
+          ls -l "$HOME/.claude.json" || true
+
+          run_diagnostics "bash tests/run-diagnostics.sh --image-name ${PODMAN_IMAGE_NAME} shell podman"
+          run_diagnostics "env AWS_PROFILE=example AWS_REGION=us-east-1 CLAUDE_CODE_USE_BEDROCK=1 bash tests/run-diagnostics.sh --image-name ${PODMAN_IMAGE_NAME} shell podman"
+          run_diagnostics "env AWS_PROFILE=example AWS_REGION=us-east-1 PI_USE_BEDROCK=1 bash tests/run-diagnostics.sh --image-name ${PODMAN_IMAGE_NAME} shell podman"
+
+          if grep -q '✗' "$log_file"; then
+            echo "Diagnostics output contained a failure marker (✗)." >&2
+            exit 1
+          fi
+
+      - name: Log in to GitHub Container Registry for Podman
+        if: github.event_name != 'pull_request'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login "${{ env.REGISTRY }}" -u "${{ github.actor }}" --password-stdin
+
+      - name: Push Podman image to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        run: |
+          repo_lc="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          image_base="${{ env.REGISTRY }}/${repo_lc}"
+          sha_tag="sha-${GITHUB_SHA}"
+
+          podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:${sha_tag}"
+          podman push "${image_base}:${sha_tag}"
+          podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:${COMBO_TAG}"
+          podman push "${image_base}:${COMBO_TAG}"
+
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:latest"
+            podman push "${image_base}:latest"
+          fi
+
 
       - name: Export Podman image as docker archive
         run: |
@@ -180,24 +129,31 @@ jobs:
       - name: Verify Singularity artifact exists
         run: test -f "${SINGULARITY_SIF_PATH}"
 
-      - name: Run shell diagnostics
+      - name: Run Singularity shell diagnostics
         run: |
           set -o pipefail
           log_file="$(mktemp)"
           mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache"
           touch "$HOME/.codex/auth.json" "$HOME/.claude/settings.json" "$HOME/.claude.json" "$HOME/.aws/config"
-          script -q -e -c "bash tests/run-diagnostics.sh --sif-path ${SINGULARITY_SIF_PATH} shell singularity" /dev/null 2>&1 | tee -a "$log_file"
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            exit "$status"
-          fi
+
+          run_diagnostics() {
+            script -q -e -c "$1" /dev/null 2>&1 | tee -a "$log_file"
+            status=${PIPESTATUS[0]}
+            if [ "$status" -ne 0 ]; then
+              exit "$status"
+            fi
+          }
+
+          run_diagnostics "bash tests/run-diagnostics.sh --sif-path ${SINGULARITY_SIF_PATH} shell singularity"
+          run_diagnostics "env AWS_PROFILE=example AWS_REGION=us-east-1 CLAUDE_CODE_USE_BEDROCK=1 bash tests/run-diagnostics.sh --sif-path ${SINGULARITY_SIF_PATH} shell singularity"
+          run_diagnostics "env AWS_PROFILE=example AWS_REGION=us-east-1 PI_USE_BEDROCK=1 bash tests/run-diagnostics.sh --sif-path ${SINGULARITY_SIF_PATH} shell singularity"
 
           if grep -q '✗' "$log_file"; then
             echo "Diagnostics output contained a failure marker (✗)." >&2
             exit 1
           fi
 
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GitHub Container Registry for Apptainer
         if: github.event_name != 'pull_request'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | apptainer registry login --username "${{ github.actor }}" --password-stdin "docker://${{ env.REGISTRY }}"
 
@@ -208,8 +164,8 @@ jobs:
           image_base="oras://${{ env.REGISTRY }}/${repo_lc}-sif"
           sha_tag="sha-${GITHUB_SHA}"
 
-          apptainer push --allow-unsigned ./llm.sif "${image_base}:${sha_tag}"
+          apptainer push --allow-unsigned "./${SINGULARITY_SIF_PATH}" "${image_base}:${sha_tag}"
 
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            apptainer push --allow-unsigned ./llm.sif "${image_base}:latest"
+            apptainer push --allow-unsigned "./${SINGULARITY_SIF_PATH}" "${image_base}:latest"
           fi
