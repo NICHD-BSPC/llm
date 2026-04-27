@@ -70,6 +70,20 @@ RUN case "${TARGETARCH}" in \
     *) echo "Unsupported architecture: ${TARGETPLATFORM}/${TARGETARCH}" >&2; exit 1 ;; \
   esac
 
+# Various env vars
+ENV DEVCONTAINER=true \
+    HOME=/home/${USERNAME} \
+    SHELL=/bin/bash \
+    EDITOR=vim \
+    VISUAL=vim \
+    LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    TERM=xterm-256color \
+    COLORTERM=truecolor \
+    # Claude Code complains if this is not in the PATH \
+    PATH="$PATH:/home/${USERNAME}/.local/bin"
+
 RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
   export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
   if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
@@ -93,46 +107,15 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update && \
   rm -rf /tmp/aws /tmp/awscliv2.zip && \
   \
-  # Install Claude CLI, using the download base URL parsed from the install script. \
-  INSTALL_SCRIPT="$(curl -fsSL https://claude.ai/install.sh)" && \
-  DOWNLOAD_BASE_URL="$(printf '%s' "${INSTALL_SCRIPT}" | grep -o 'DOWNLOAD_BASE_URL=\"[^\"]*\"' | head -1 | cut -d'"' -f2)" && \
-  test -n "${DOWNLOAD_BASE_URL}" && \
-  if [ -z "${CLAUDE_VERSION}" ]; then CLAUDE_VERSION="$(curl -fsSL "${DOWNLOAD_BASE_URL}/latest")"; fi && \
-  CLAUDE_CHECKSUM="$(curl -fsSL "${DOWNLOAD_BASE_URL}/${CLAUDE_VERSION}/manifest.json" | jq -r --arg platform "${CLAUDE_PLATFORM}" '.platforms[$platform].checksum // empty')" && \
-  test -n "${CLAUDE_CHECKSUM}" && \
-  curl -fsSL "${DOWNLOAD_BASE_URL}/${CLAUDE_VERSION}/${CLAUDE_PLATFORM}/claude" -o /tmp/claude && \
-  printf '%s  %s\n' "${CLAUDE_CHECKSUM}" /tmp/claude | sha256sum -c - && \
-  install -m 0755 /tmp/claude /usr/local/bin/claude && \
-  rm -f /tmp/claude && \
+  # Claude Code installation method from official docs \
+  curl -fsSL https://claude.ai/install.sh | bash && \
   \
-  # Install Codex from the published GitHub release tarball. \
-  if [ -z "${CODEX_VERSION}" ]; then CODEX_TAG="$(curl -fsSL https://api.github.com/repos/openai/codex/releases/latest | jq -r '.tag_name')"; CODEX_VERSION="${CODEX_TAG#rust-v}"; else CODEX_TAG="rust-v${CODEX_VERSION}"; fi && \
-  test -n "${CODEX_VERSION}" && \
-  curl -fsSL "https://github.com/openai/codex/releases/download/${CODEX_TAG}/${CODEX_ASSET}" -o /tmp/codex.tar.gz && \
-  tar -xzf /tmp/codex.tar.gz -C /tmp && \
-  install -m 0755 "/tmp/${CODEX_BINARY}" /usr/local/bin/codex && \
-  rm -rf /tmp/codex.tar.gz "/tmp/${CODEX_BINARY}" && \
+  # Codex installation from official docs
+  npm i -g @openai/codex && \
   \
-  # Install Pi. \
-  if [ -n "${PI_VERSION}" ]; then npm install -g "@mariozechner/pi-coding-agent@${PI_VERSION}"; else npm install -g @mariozechner/pi-coding-agent; fi && \
-  install -d /usr/local/share/llm && \
-  ACTUAL_CLAUDE_VERSION="$(claude --version | sed -E 's/^([0-9][^ ]*).*/\1/')" && \
-  ACTUAL_CODEX_VERSION="$(codex --version | awk '{print $2}')" && \
-  ACTUAL_PI_VERSION="$(pi --version | tr -d '\r')" && \
-  printf 'CLAUDE_VERSION=%s\nCODEX_VERSION=%s\nPI_VERSION=%s\n' "${ACTUAL_CLAUDE_VERSION}" "${ACTUAL_CODEX_VERSION}" "${ACTUAL_PI_VERSION}" > /usr/local/share/llm/tool-versions.env
+  # Pi installation from official docs \
+  npm install -g @mariozechner/pi-coding-agent
 
-# Various env vars
-ENV DEVCONTAINER=true \
-    HOME=/home/${USERNAME} \
-    SHELL=/bin/bash \
-    EDITOR=vim \
-    VISUAL=vim \
-    LANG=en_US.UTF-8 \
-    LC_ALL=en_US.UTF-8 \
-    LANGUAGE=en_US:en \
-    TERM=xterm-256color \
-    COLORTERM=truecolor \
-    PATH="$PATH:/home/${USERNAME}/.local/bin"
 
 RUN mkdir -p \
       /workspace \
