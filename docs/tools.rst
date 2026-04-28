@@ -64,11 +64,11 @@ variable):
 
 Refreshes credentials locally, and optionally copies them to a remote host.
 
-- Refreshes Codex authentication (:file:`~/.codex/auth.json`)
-- Refreshes AWS SSO credentials (:file:`~/aws/sso`, used for Claude)
-- Copies refreshed credentials to a remote host (such as NIH's Biowulf)
-- Optionally pushes entire config directories to remote
-- Prints Bedrock bearer-token exports for tools that do not use the AWS SDK
+- Refreshes Codex authentication (:file:`~/.codex/auth.json`). This is mounted inside running Codex containers, so they will see the new credentials when refreshed.
+- Refreshes AWS SSO credentials (:file:`~/aws/sso`). This is mounted inside running Claude and Pi containers, so they will see the new credentials when refreshed.
+- Optionally pushes refreshed credentials to a remote host (such as NIH's Biowulf).
+- Optionally pushes entire config directories to remote.
+- Optionally prints Bedrock bearer-token exports for tools that do not use the AWS SDK.
 
 Examples
 ~~~~~~~~
@@ -112,13 +112,23 @@ support AWS SSO:
 Runs the agent inside a container, assuming credentials are already available.
 
 - Detects Podman vs Singularity, or accepts an explicit backend
-- By default, mounts the current working directory and credential/config paths
-  relevant to the called tool
+- Defaults to automatically pulling the latest containers published by this
+  repo, from GitHub Container Registry (https://ghcr.io/nichd-bspc/llm)
+- By default, mounts the current working directory and only the
+  credential/config paths relevant to the called tool
 - Starts :cmd:`codex`, :cmd:`claude`, :cmd:`pi`, or an interactive shell
 - Passes through mounts, env vars, cert bundles, and optional conda environments
 
 Examples
 ~~~~~~~~
+
+.. note::
+
+   Unless noted otherwise, these examples use Codex for simplicity. Replace
+   ``codex`` with ``claude``, ``pi``, or ``shell`` as needed.
+
+Basic usage
+^^^^^^^^^^^
 
 Run codex, detecting container runtime automatically (Podman on Mac, Singularity
 on Linux):
@@ -126,17 +136,7 @@ on Linux):
 .. code-block:: bash
 
    launch.py codex
-
-Or Claude:
-
-.. code-block:: bash
-
    launch.py claude
-
-Or Pi:
-
-.. code-block:: bash
-
    launch.py pi
 
 Run a shell for debugging -- this will mount credentials for all supported
@@ -146,13 +146,30 @@ agents:
 
    launch.py shell
 
-The rest of these examples will use Codex.
-
-Force podman instead of Singularity
+Resume a session:
 
 .. code-block:: bash
 
-   launch.py --backend singularity codex
+   launch.py codex --resume 019dd08c-a96f-7090-8708-8a4f4cfa8834
+
+One-shot prompt with an attached image and then exit:
+
+.. code-block:: bash
+
+   launch.py codex exec \
+     -i ./image.png \
+     -o out.json \
+     -- \
+     "extract the text from this image and return as JSON"
+
+Check help:
+
+.. code-block:: bash
+
+   launch.py codex -h
+
+Mounts and read-only
+^^^^^^^^^^^^^^^^^^^^
 
 Let the container see something outside the working directory:
 
@@ -160,13 +177,31 @@ Let the container see something outside the working directory:
 
    launch.py --mount /data/experiment1 codex
 
-Mount a conda env into the container (*only works on Linux*)
+Mount a directory read-only inside the container:
+
+.. code-block:: bash
+
+   launch.py --mount /data/experiment1:/data/experiment1:ro codex
+
+Mount the current working directory as read-only, so the agent can read but not
+modify your files:
+
+.. code-block:: bash
+
+   launch.py --read-only codex
+
+   # short form
+   launch.py --ro claude
+
+Mount a conda env into the container and prepend it to the path so the agent
+can use it (*only works on Linux*):
 
 .. code-block:: bash
 
    launch.py --conda-env my-env codex
 
-This is equivalent to the following "mount + prepend to path" combination:
+This is equivalent to the following "mount + prepend to path" combination,
+which can be used for more complex scenarios:
 
 .. code-block:: bash
 
@@ -175,29 +210,40 @@ This is equivalent to the following "mount + prepend to path" combination:
      --prepend-path ~/conda/envs/my-env/bin \
      codex
 
+Environment and certificates
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Provide additional environment variables or override what's in the environment:
+
+.. code-block:: bash
+
+   launch.py \
+     --env OMP_NUM_THREADS=1 \
+     --env HOME=/tmp \
+     codex
+
 Provide a certificates file you've previously downloaded to allow enterprise TLS
-interception:
+interception (see :doc:`certificates`):
 
 .. code-block:: bash
 
    launch.py --certs ~/certs.pem codex
 
-Provide additional environment variables:
+Backend and debugging
+^^^^^^^^^^^^^^^^^^^^^
+
+Force podman instead of Singularity:
 
 .. code-block:: bash
 
-   launch.py \
-     --env OMP_NUM_THREADS=1
-     --env \
-     codex
+   launch.py --backend podman codex
 
 Print out the command to be run as composed by :file:`launch.py` and then exit
-without running. Useful for debugging.
+without running. Useful for debugging:
 
 .. code-block:: bash
 
    launch.py --dry-run codex
-
 
 When developing locally or using other containers, specify the image name
 (Podman) or SIF name (Singularity):
@@ -210,7 +256,7 @@ When developing locally or using other containers, specify the image name
    # or another published image
    launch.py --image-name quay.io/org/container codex
 
-   # or on Linux host, defaults to Sinuglarity:
+   # or on Linux host, defaults to Singularity:
    launch.py --sif-name llm.sif codex
 
 
@@ -228,7 +274,7 @@ default in the container:
 
 - ``HOME`` – set to ``/home/devuser``
 - ``USER``, ``LOGNAME``, ``USERNAME`` – set to ``devuser``
-- ``TOOL`` – the subcommand being run (e.g., ``codex``, ``claude``, ``pi``)
+- ``TOOL`` – the subcommand being run (e.g., ``codex``, ``claude``, ``pi``); this is only used for information
 - ``HOST_MOUNT_DIR`` – the current working directory on the host
 - ``PATH`` – constructed from the base Ubuntu PATH plus ``/home/devuser/.local/bin``, with optional prepends from ``--conda-env`` or ``--path-prepend``
 
@@ -272,11 +318,3 @@ Builds the local Podman image.
 
 See :doc:`building-containers`. Image maintainers should keep a full checkout
 and run :cmd:`./build.py` from the repo root.
-
-Related pages
--------------
-
-- :doc:`getting-started-codex`
-- :doc:`getting-started-claude`
-- :doc:`running-containers`
-- :doc:`building-containers`
