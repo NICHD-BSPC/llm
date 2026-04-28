@@ -118,11 +118,14 @@ class Backend:
         return env_args
 
     def build_mount_args(self, mounts):
-        """Given a dict of mounts, build the arguments for the container to
-        mount them all."""
+        """Given a list of (host, container, readonly) tuples, build the
+        arguments for the container to mount them all."""
         mount_args = []
-        for host_path, container_path in mounts:
-            mount_args.extend([self.mount_flag, f"{host_path}:{container_path}"])
+        for host_path, container_path, readonly in mounts:
+            spec = f"{host_path}:{container_path}"
+            if readonly:
+                spec += ":ro"
+            mount_args.extend([self.mount_flag, spec])
         return mount_args
 
     def check_availability(self):
@@ -402,7 +405,7 @@ class Launcher:
         container_workspace = args.workspace_mount or host_cwd
 
         mounts = [
-            (host_cwd, container_workspace),
+            (host_cwd, container_workspace, args.read_only),
         ]
 
         mounts.extend(args.extra_mounts)
@@ -410,17 +413,17 @@ class Launcher:
         if args.conda_env:
             conda_path = args.conda_env
             if not self._is_path_inside_workspace(conda_path, host_cwd):
-                mounts.append((conda_path, conda_path))
+                mounts.append((conda_path, conda_path, False))
 
         if args.certs:
-            mounts.append((args.certs, CONTAINER_CERTS_PATH))
+            mounts.append((args.certs, CONTAINER_CERTS_PATH, True))
 
         return mounts
 
     def _container_path_is_mounted(self, container_path):
         """Return True when a container path is reachable via the mount set."""
         target = PurePosixPath(container_path)
-        for _, mount_target in self._static_mounts():
+        for _, mount_target, _ in self._static_mounts():
             mount_path = PurePosixPath(mount_target)
             if target == mount_path or target.is_relative_to(mount_path):
                 return True
@@ -569,26 +572,26 @@ class Launcher:
         container_targets = {}
         normalized = []
 
-        for host_path, container_path in mounts:
-            existing_host_path = container_targets.get(container_path)
-            if existing_host_path == host_path:
+        for host_path, container_path, readonly in mounts:
+            existing = container_targets.get(container_path)
+            if existing == (host_path, readonly):
                 continue
 
-            if existing_host_path is not None and existing_host_path != host_path:
+            if existing is not None and existing[0] != host_path:
                 fatal(
                     "conflicting mounts for container path "
-                    f"'{container_path}': '{existing_host_path}' and '{host_path}'."
+                    f"'{container_path}': '{existing[0]}' and '{host_path}'."
                 )
 
-            container_targets[container_path] = host_path
-            normalized.append((host_path, container_path))
+            container_targets[container_path] = (host_path, readonly)
+            normalized.append((host_path, container_path, readonly))
 
         return normalized
 
     def _warn_nested_mounts(self, mounts):
         """Warn when one container mount target nests inside another."""
-        for index, (host_path, container_path) in enumerate(mounts):
-            for other_host_path, other_container_path in mounts[index + 1 :]:
+        for index, (host_path, container_path, _) in enumerate(mounts):
+            for other_host_path, other_container_path, _ in mounts[index + 1 :]:
                 nested_container = self._nested_path_pair(
                     PurePosixPath(container_path),
                     PurePosixPath(other_container_path),
@@ -651,7 +654,7 @@ class Launcher:
 
             # Only mount if it exists
             if host_path.exists():
-                mounts.append((str(host_path), container_path))
+                mounts.append((str(host_path), container_path, False))
                 if self.args.verbose:
                     LOGGER.info("Mounting credential: %s", path_str)
             elif self.args.verbose:
@@ -660,26 +663,32 @@ class Launcher:
         return mounts
 
     def _parse_mount_spec(self, spec):
-        """Parse mount spec: 'HOST' or 'HOST:CONTAINER'."""
+        """Parse mount spec: 'HOST', 'HOST:CONTAINER', or 'HOST:CONTAINER:ro'."""
         if not spec or spec == ":":
             fatal(f"invalid mount specification '{spec}'.")
 
-        if ":" not in spec:
-            # Single path: resolve it and use for both host and container
-            resolved = str(Path(spec).resolve())
+        parts = spec.split(":")
+        readonly = False
+
+        if parts[-1] == "ro":
+            readonly = True
+            parts = parts[:-1]
+
+        if len(parts) == 1:
+            resolved = str(Path(parts[0]).resolve())
             host = container = resolved
-        else:
-            host, container = spec.split(":", 1)
+        elif len(parts) == 2:
+            host, container = parts
             if not host or not container:
                 fatal(
                     f"invalid mount specification '{spec}'. "
                     "Both host and container paths must be non-empty."
                 )
-            # Resolve only host path to absolute (can't resolve container path
-            # unless inside container)
             host = str(Path(host).resolve())
+        else:
+            fatal(f"invalid mount specification '{spec}'.")
 
-        return host, container
+        return host, container, readonly
 
     def run(self):
         """Main entry point for launching a container."""
@@ -785,7 +794,14 @@ def build_parser():
         "--mount",
         action="append",
         default=[],
-        help="Additional mount: HOST_PATH or HOST_PATH:CONTAINER_PATH (repeatable)",
+        help="Additional mount: HOST_PATH, HOST_PATH:CONTAINER_PATH, or HOST_PATH:CONTAINER_PATH:ro (repeatable)",
+    )
+    parser.add_argument(
+        "--read-only",
+        "--ro",
+        action="store_true",
+        default=False,
+        help="Mount the current working directory as read-only inside the container",
     )
 
     # Execution mode
