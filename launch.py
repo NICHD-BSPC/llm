@@ -218,7 +218,7 @@ class SingularityBackend(Backend):
         # Singularity complains if $HOME is provided, and --home requires
         # either a host location or a host:mount pair. So we create an empty
         # temp directory to provide as the home.
-        home = env_vars.pop("HOME")
+        home = env_vars["HOME"]
         tmp = tempfile.mkdtemp()
 
         env_args = self.build_env_args(env_vars)
@@ -230,7 +230,8 @@ class SingularityBackend(Backend):
             self.command, "exec",
             *env_args,
             *mount_args,
-            "--home", f"{tmp}:{home}"
+            "--contain", 
+            "--home", f"{tmp}:{home}", 
             "--no-home",
             "--cleanenv",
             "--pwd", args.workspace_mount or os.getcwd(),
