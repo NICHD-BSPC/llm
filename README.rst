@@ -1,9 +1,9 @@
 LLM containers
 ==============
 
-In `NICHD's Bioinformatics and Scientific Programming Core <https://bioinformatics.nichd.nih.gov>`__, we wanted to use multiple LLM agent tools in a secure way on multiple systems. 
+In `NICHD's Bioinformatics and Scientific Programming Core <https://bioinformatics.nichd.nih.gov>`__, we wanted to use multiple LLM agent tools in a secure way on multiple systems, but there was nothing available for our particular requirements.
 
-So, this repo supports:
+So, this repo now supports:
 
 **Multiple agent harnesses**
 
@@ -34,6 +34,7 @@ When everything is set up, usage looks like this:
    refresh.py        # refresh credentials if needed
    launch.py codex   # run Codex in a container
    launch.py claude  # or Claude Code
+   launch.py pi      # or pi
 
 Or, to use on a remote machine:
 

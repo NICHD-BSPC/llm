@@ -13,19 +13,17 @@ Step 1: Codex locally (native)
 ------------------------------
 
 The minimal first step is to confirm that the Codex CLI works locally (without
-a container). Even if you only planning on calling models from Codex inside
+a container). Even if you are planning on only calling models from Codex inside
 a container, this native version still needs to be set up because we need it to
 refresh login credentials.
 
 1. Install `Codex CLI <https://developers.openai.com/codex/cli>`__ on your local machine.
-2. Navigate to a directory you are comfortable letting Codex see. (this will
-   likely NOT be your home directory! Move to a subdirectory).
+2. Navigate to a directory you are comfortable letting Codex see (not your home directory)
 3. Run :cmd:`codex` from the terminal.
-4. When Codex starts, select the first login option. This opens a browser
-   for single sign-on. Codex waits in the background while you log in.
+4. When Codex starts, select the first login option, *Sign in with ChatGPT*.
+   A browser will open for single sign-on.
 5. After successful login, the running Codex instance detects the login
-   automatically. It will then ask for permission to work in the current
-   directory.
+   automatically. Allow permission to work in the current directory.
 6. Type in a prompt (even just the word "testing"). It's working if the model
    responds.
 7. Ctrl-C twice, or :cmd:`/exit` to quit.
@@ -149,7 +147,23 @@ Next, we'll run Codex on a remote system (like NIH's Biowulf HPC).
      mounted :file:`~/.codex` into the container (which includes the ``auth.json``
      credentials), and started Codex.
 
-Step 4: Codex configuration
----------------------------
+Step 4: Configure Codex
+-----------------------
 
-TODO
+Step 5: Routine usage
+---------------------
+
+Periodically, your credentials stored in :file:`~/.codex/auth.json` will
+expire. Use the :ref:`refresh` script to update them and push to a remote.
+
+Each time you start the container, you will use the latest built image from
+this repo, ``ghcr.io/nichd-bspc/llm:latest`` for podman or
+``oras://ghcr.io/nichd-bspc/llm-sif:latest`` for Singularity.
+
+If you don't want this behavior you can use the ``--image-name`` argument to
+:ref:`launch` to pin to a particular version: e.g.,
+``--image-name ghcr.io/nichd-bspc/llm:codex-0.125.0``, or other tags listed on
+the `images page
+<https://github.com/NICHD-BSPC/llm/pkgs/container/llm/versions>`__.
+
+

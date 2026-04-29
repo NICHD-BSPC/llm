@@ -37,6 +37,19 @@ and you can authenticate.
       export CLAUDE_CODE_DISABLE_AUTOUPDATER=1          # Don't autoupdate
       export CLAUDE_CODE_DISABLE_INSTALLATION_CHECKS=1  # Don't check installation
 
+      # Env vars to configure which Amazon Bedrock models to use.
+      #
+      # Otherwise we get the message: "Sonnet: Sonnet 4.5 not available — using
+      # Sonnet 4 for this session; Haiku: Haiku 4.5 not available — using Claude
+      # 3.5 Haiku for this session."
+      #
+      # In v2.1.119, it seems OK to not set the Opus default model; selecting
+      # it with the /model command sets it to the value we use below.
+
+      export ANTHROPIC_DEFAULT_OPUS_MODEL="us.anthropic.claude-opus-4-6-v1"
+      export ANTHROPIC_DEFAULT_SONNET_MODEL="us.anthropic.claude-sonnet-4-6"
+      export ANTHROPIC_DEFAULT_HAIKU_MODEL="us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
       # These should have been exported already during the previous step
       export AWS_PROFILE="AWSPowerUserAccess-00001"  # use your own account here
       export AWS_REGION=us-east-1
@@ -47,6 +60,14 @@ and you can authenticate.
   and you get the confirmation, and running :cmd:`echo
   $CLAUDE_CODE_USE_BEDROCK` gives ``1``.
 
+
+.. note::
+
+   Although the `Claude Code on Amazon Bedrock
+   <https://code.claude.com/docs/en/amazon-bedrock>`__ docs describe adding
+   ``"awsAuthRefresh": "aws sso login --profile myprofile"`` to your config,
+   this is only for when you're running Claude Code without a container. The
+   :ref:`refresh` script will take care of this for us.
 
 Claude Code locally (Podman container)
 --------------------------------------

@@ -1,56 +1,14 @@
 Running agents in containers
 ============================
 
-This page describes how to run agents inside containers, either on a local
-machine such as a laptop or on a remote machine such as Biowulf. It covers the
-background on what containers are and why this repo uses them, and then the
-operational details of launching them with :cmd:`launch.py`.
+**The quickest way to get started is to start with** :doc:`getting-started-codex`.
 
-It is assumed that you at least have successfully finished the
-:doc:`getting-started-codex` and/or :doc:`getting-started-claude` sections.
+Then see :doc:`tools` for details and examples for using :ref:`refresh` and
+:ref:`launch`.
 
-Running a container
--------------------
-
-Use ``launch.py``. This does all sorts of prep work and mounts the right things
-in the right places.
-
-.. code-block:: bash
-
-   launch.py codex
-
-This will:
-
-- Mount the credentials needed inside the container
-- Mount the agent config directory
-- Mount the current working directory
-- Start the agent
-
-See :ref:`launch` for details.
+The rest of this page has details and additional context on containers.
 
 .. _running-containers-resuming:
-
-Resuming
---------
-
-Because the agent config directory is mounted from the host, conversations are
-saved there and can be resumed later:
-
-.. code-block:: bash
-
-   launch.py codex resume 019d72f9-14e6-7790-9588-418e36739265
-
-Other directories
------------------
-
-If you need access to other directories, mount them at runtime. By default they
-are mounted at the same absolute path as on the host:
-
-.. code-block:: bash
-
-   # this will create a directory, /data/examples, inside the container which
-   # will have the contents of the host's /data/examples directory.
-   launch.py --mount /data/examples codex
 
 
 What's a container?
@@ -63,8 +21,8 @@ need, and then run that image as a container.
 Containers add setup overhead, but they provide strong isolation from the rest
 of the system.
 
-Why containers?
----------------
+Why containers for running agents?
+----------------------------------
 
 Without a container, agent tools generally have read access to the entire host
 filesystem. If you have PII or sensitive information anywhere on the system, it
@@ -75,10 +33,15 @@ but it does not reliably restrict reads. Those tools usually need access to
 standard binaries like :cmd:`git` and :cmd:`ls` outside the working directory, which
 still requires filesystem visibility.
 
-Running inside a container narrows that exposure to the mounted workspace and
-the small set of config paths these scripts intentionally provide. Tools such as
-:cmd:`git` and :cmd:`ls` are installed inside the container, so the agent does not
-need to read them from the host.
+However, using a sandbox still requires vigilant monitoring of the model's
+requests and careful management of allow/deny lists in respective agents'
+config files to avoid exposing private information. With no standardized config
+format, it's tricky to maintain this.
+
+Running inside a container uses the principle of least privilege, narrowing
+exposure to the mounted workspace and the small set of config paths (here, this
+is done by :ref:`launch`). Tools such as :cmd:`git` and :cmd:`ls` are installed
+inside the container, so the agent does not need to read them from the host.
 
 In practice, containers reduce the blast radius of problems caused by agents.
 
@@ -99,30 +62,83 @@ Desktop to use it.
 
 Singularity is a different container runtime. A Singularity container can be
 built from a Docker or Podman container. It also does not need to run as root.
-It is already available on NIH HPC; see :nih:`NIH-specific` `Biowulf's Singularity page <https://hpc.nih.gov/apps/singularity.html>`_.
+It is already available on NIH HPC; see :nih:`NIH-specific` `Biowulf's
+Singularity page <https://hpc.nih.gov/apps/singularity.html>`_.
+
+
+.. _images-created:
+
+How are the images created?
+---------------------------
+
+This repo uses GitHub Actions to automatically build images on each change to
+the code and tests those images (to the extent that it can, without actual
+credentials to use models).
+
+The `main workflow
+<https://github.com/NICHD-BSPC/llm/tree/main/.github/workflows/main.yml>`__
+builds a Podman container using the `Dockerfile
+<https://github.com/nichd-bspc/llm/tree/main/Dockerfile>`__ as the
+specification (which, among other things, includes installation of Codex,
+Claude Code, and Pi). It saves this as a Docker Archive tarball, which is then
+passed to Singularity to convert it into the Singularity Image Format (SIF).
+
+When this happens on code in the ``main`` branch, both images are pushed to
+GHCR.
+
+GitHub Actions publishes the Podman image to GHCR with these tags:
+
+- ``sha-<git sha>``
+- ``latest`` on ``main``
+- ``claude-<version>``
+- ``codex-<version>``
+- ``pi-<version>``
+
+The GitHub Actions container workflow builds ``linux/amd64`` images only. It
+first builds and tests the Podman image, then derives the version tags by
+running the built container and reading ``claude --version``, ``codex
+--version``, and ``pi --version``. The Singularity phase then converts that
+same tested Podman image into a SIF artifact.
+
+The workflow also sets ``org.opencontainers.image.source`` to the GitHub
+repository URL so the GHCR package stays linked to the repository.
+
+Running containers without ``launch.py``
+----------------------------------------
+
+You can use the containers outside the context of :ref:`launch` like
+this to get a bash shell, from which you can start one of the agents.
+
+This will not mount the credentials properly, and Singularity will
+**automatically mount your entire home directory** unless you use `--no-home`
+and **all env vars** unless you use ``--cleanenv``.
+
+Consider using the output of :cmd:`launch.py --dry-run shell` as a starting
+point for composing your own commands.
+
+.. code-block:: bash
+
+   podman run --rm -it ghcr.io/nichd-bspc/llm
+
+.. code-block:: bash
+
+   singularity exec ghcr.io/nichd-bspc/llm-sif bash
 
 .. _container-notes-terminology:
 
 Terminology
 -----------
 
-These docs distinguish between *local*, *remote*, *host*, and *native*.
-
-We distinguish between *local* and *remote* because browser-based login flows behave
-differently depending on where the browser is running. The current login
-methods need to run on a computer with a web browser that can redirect back
-to ``localhost``; in practice, that usually means a local machine.
+Throughout these docs we use the terms *local*, *remote*, *host*, and *native*.
 
 - Local: the machine where you are logging in with a web browser, for example a
   laptop or desktop
 - Remote: a host in a data center, such as Biowulf, without that browser flow
   available
+- Host: the system running Podman/Docker/Singularity
+- Native: running an agent tool directly on the host rather than inside a container
 
-When discussing containers, the *host* is the system running Podman, Docker, or
-Singularity.
-
-We use *native* to describe running an agent tool directly on the host rather than
-inside a container.
+For example:
 
 +------------+--------------------------------+---------------+--------+-------+
 | Machine    | Running                        | Native?       | Local? | Host  |
@@ -141,12 +157,12 @@ inside a container.
 Login model
 -----------
 
-This section explains why :cmd:`refresh.py` exists.
+This section explains why :ref:`refresh` exists.
 
-The login methods used here are browser-based single sign-on flows. The
-browser must be able to redirect to a specific localhost port, so the login
-must happen on a local machine and the resulting credentials then copied to
-a remote machine if needed:
+In browser-based single sign-on flows like those used here, the browser must be
+able to redirect to a specific localhost port for the tool to detect that login
+was successful and then save a local file to persist that information. For
+example:
 
 - :cmd:`codex login` opens a browser to ``https://auth.openai.com/log-in``,
   then waits for a localhost redirect and saves credentials to
@@ -156,108 +172,72 @@ a remote machine if needed:
   then waits for a localhost redirect and saves credentials under
   :file:`~/.aws/sso`
 
-Using Codex as an example, :cmd:`codex login` opens a web browser. Codex stays
-open and listens on a particular localhost port. After you log in, the browser
-redirects back to that localhost port and Codex records the login.
-
 This does not work cleanly inside a container. The container does not have a
-GUI, and if you paste the login URL into a browser running on the host, the
-browser redirects to the *host's* localhost rather than the *container's*
-localhost. The callback never reaches Codex inside the isolated container, so it
-waits indefinitely.
+GUI (and therefore no browser). If you paste the login URL into a browser
+running on the host, the browser redirects to the *host's* localhost rather
+than the *container's* localhost. So the callback never reaches Codex inside the
+isolated container, and it waits indefinitely.
 
 The same issue exists on remote systems. If you run :cmd:`codex login` on
 a remote system, it helpfully prints a URL to visit. If you paste that into
 a local browser and log in, the website redirects to your *local* machine, but
 Codex is still listening inside the container on the *remote* machine. The
-redirect never reaches the remote, let alone inside the container on the remote,
-so login cannot complete there.
+redirect never reaches the remote, let alone inside the container on the
+remote, so login cannot complete there either.
 
 Port forwarding and tunneling can work around this, but copying the relevant
-credential files is simpler. :cmd:`refresh.py` automates that. This is also one of
-the approaches suggested in the `Codex auth documentation <https://developers.openai.com/codex/auth#fallback-authenticate-locally-and-copy-your-auth-cache>`_.
+credential files is simpler.
 
-How mounting works
-------------------
+:ref:`refresh` automates this. This copying mechanism is also one of the
+approaches suggested in the `Codex auth documentation
+<https://developers.openai.com/codex/auth#fallback-authenticate-locally-and-copy-your-auth-cache>`_.
 
-Images are used to create containers. By default, this repo uses the images
-created by the GitHub Actions workflow, which in turn are created from the
-definition in the Dockerfile. This includes the installation of multiple agentic
-tools inside the image.
-
-The goal of a container is to isolate it from the rest of the system. But in
-order to be useful, we need to allow *some* parts of the system into the
-container. For example, we need to provide credentials to an agent running inside
-a container so it can call out to a model. We typically want to add the current
-working directory inside the model so that we can work on the files there.
-
-We can mount files from the host into the container by giving a source location
-on the host and an intended destination path inside the container. We can
-provide environment variables that will be passed in to the container.
-
-The `launch.py` script does some of these things automatically, and allows you
-to specify additional things as well.
 
 .. _container-notes-persistent-mounts:
 
 Mounts and config
 -----------------
 
-Files and directories on the host can be mounted into a container to
-selectively make them available inside the otherwise isolated environment.
+The goal of a container is to isolate it from the rest of the system. But in
+order to be useful, we need to allow *some* parts of the system into the
+container. For example, we need to provide credentials to an agent running inside
+a container, and we typically want to add the current working directory inside
+the model so that we can work on the files there.
 
-The host home directory is not mounted. Even though Singularity mounts it by
+We can mount files from the host into the container by giving a source location
+on the host and an intended destination path inside the container. The
+:ref:`launch` script does this automatically for the working directory and the
+crendential files, and allows you to specify additional paths if needed with
+``--mount``.
+
+The host's home directory is not mounted. Even though Singularity mounts it by
 default, this setup disables that behavior to reduce exposure.
+
+Only the credentials and config needed for each tool is mounted -- unless you
+call :ref:`launch` with ``shell`` which will mount them all.
 
 The user inside the container is called `devuser`, and the home directory is
 created at `/home/devuser` inside the container image.
 
-:cmd:`launch.py` mounts a small set of host config and credential paths into
-the container, depending on the subcommand. See :doc:`config-files` for the
-full list and per-subcommand behavior.
-
 Refreshing credentials
 ----------------------
 
-You must refresh credentials *outside the container*. Part of the isolation of
-a container is a network isolation. When you log in with SSO methods (like AWS
-SSO or ChatGPT Enterprise), after logging in the website redirects you to
-localhost on the machine running the web browser. But this does not make it into
-the container (by design).
-
-Instead, we log in using the local machine (no container), the credentials get
-saved to a file, and when we mount that file or directory, the container sees
-the updated version.
-
-Similarly, we typically don't run a web browser on a remote system, so after
-logging in locally we also need to transport our credentials to the remote.
-
-``refresh.py`` takes care of all of this.
-
-.. code-block:: bash
-
-   refresh.py
-
-To refresh only one credential type:
-
-.. code-block:: bash
-
-   refresh.py --kind codex
-
-To transport to a remote (like NIH's Biowulf):
-
-.. code-block:: bash
-
-   refresh.py --remote biowulf.nih.gov
-
+You must refresh credentials *outside the container* (see
+:ref:`container-notes-login-model`) but you don't need to stop the container to
+do this. For example, Claude Code running in a container may not be able to
+connect due to credentials expiring, but as soon as you use :ref:`refresh` and
+the credentials on the host are updated, Claude Code will immediately see them
+since they are mounted into the container. While Claude Code does retry
+attempts, if it has been a while between old credentials expiring and new ones
+being available then you might need to re-send your latest prompt.
 
 Conda envs only work on Linux
 -----------------------------
 
 The container is ``linux/x86_64``. If the host matches that architecture (like
-NIH's Biowful) you can mount tools into the container using ``--path-prepend``
-or ``--conda-env``. This is a convenient way to provide development tools inside
-the container without rebuilding the image.
+NIH's Biowulf) you can mount tools into the container using ``--path-prepend``
+or ``--conda-env``. This is a convenient way to provide development tools
+inside the container without needing to change the image.
 
 You can also pass environment variables through with repeated ``--env
 KEY=VALUE`` options.

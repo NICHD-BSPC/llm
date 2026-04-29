@@ -24,8 +24,8 @@ Contents
    :maxdepth: 1
 
    tools
-   running-containers
    config-files
+   running-containers
 
 **Details**
 

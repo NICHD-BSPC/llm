@@ -20,7 +20,7 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "MIGRATION.md"]
 html_theme = "furo"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
-html_title = "LLM Tools Documentation"
+html_title = "LLM containers"
 
 html_theme_options = {
     "light_css_variables": {

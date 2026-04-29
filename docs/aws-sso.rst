@@ -13,15 +13,21 @@ so it affords substantial flexibility.
 It is possible to use Azure or Google Cloud Platform instead of AWS, but that
 is not documented here yet.
 
-Prerequisites
--------------
-
-- You have an AWS STRIDES account already set up.
-- You have the list of people to include in a security group who will be able
-  to log in to AWS.
 
 1. :nih:`NIH-specific` Account provisioning
 -------------------------------------------
+
+.. warning::
+
+   This section is :nih:`NIH-specific`; other institutions will have a different
+   process. Once you can successfully authenticate to the SSO start URL for your
+   institution, continue to step 2.
+
+**Prerequisites:**
+
+1. You have an AWS STRIDES account already set up.
+2. You have the list of people to include in a security group who will be able
+   to log in to AWS.
 
 First, you need to get the relevant accounts added to the AWS Identity Center,
 which enables SSO. This is a manual setup on CIT's part since NIH's
