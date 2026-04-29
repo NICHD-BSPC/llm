@@ -108,9 +108,14 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   rm -rf /tmp/aws /tmp/awscliv2.zip && \
   \
   # Claude Code installation method from official docs \
-  curl -fsSL https://claude.ai/install.sh | bash && \
+  install -d -m 0755 /etc/apt/keyrings && \
+  curl -fsSL https://downloads.claude.ai/keys/claude-code.asc \
+    -o /etc/apt/keyrings/claude-code.asc && \
+  echo "deb [signed-by=/etc/apt/keyrings/claude-code.asc] https://downloads.claude.ai/claude-code/apt/stable stable main" \
+    | tee /etc/apt/sources.list.d/claude-code.list && \
+  apt update && apt install claude-code && \
   \
-  # Codex installation from official docs
+  # Codex installation from official docs \
   npm i -g @openai/codex && \
   \
   # Pi installation from official docs \
