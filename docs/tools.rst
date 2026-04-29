@@ -211,9 +211,6 @@ modify your files:
 
    launch.py --read-only codex
 
-   # short form
-   launch.py --ro claude
-
 Mount a conda env into the container and prepend it to the path so the agent
 can use it (*only works on Linux*):
 
