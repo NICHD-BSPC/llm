@@ -4,8 +4,18 @@ Developers
 Building containers
 -------------------
 
+Images are already created as part of this repo's GitHub Actions -- see
+:ref:`images-created`. But if you want to build your own custom containers or
+do other development work, here is how to build them yourself.
+
 1. Build the podman image
 ~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This assumes you are successfully running Codex from a container, which means
+you have Podman Desktop installed and running.
+
+The :file:`Dockerfile` is where the build is specified, so modifying that will
+most likely be your entrypoint for customization.
 
 Build once initially, then rebuild whenever you want updated tooling:
 
@@ -27,25 +37,7 @@ When running :cmd:`build.py`:
   Change it with ``--arch``.
 - Cache is used by default. To force a fresh rebuild, use ``--no-cache``.
 - If you do not pass explicit tool versions, the image installs the latest
-  available Claude Code, Codex, and Pi releases. The container records the
-  installed versions in ``/usr/local/share/llm/tool-versions.env``.
-
-GitHub Actions publishes the Podman image to GHCR with these tags:
-
-- ``sha-<git sha>``
-- ``latest`` on ``main``
-- ``claude-<version>``
-- ``codex-<version>``
-- ``pi-<version>``
-
-The GitHub Actions container workflow builds ``linux/amd64`` images only. It
-first builds and tests the Podman image, then derives the version tags by
-running the built container and reading ``claude --version``, ``codex
---version``, and ``pi --version``. The Singularity phase then converts that
-same tested Podman image into a SIF artifact.
-
-The workflow also sets ``org.opencontainers.image.source`` to the GitHub
-repository URL so the GHCR package stays linked to the repository.
+  available Claude Code, Codex, and Pi releases.
 
 .. tip::
 
@@ -65,7 +57,7 @@ Create a tarball of the Podman image:
 
    podman save -o llm-image.tar --format docker-archive llm-devcontainer
 
-Transport it to a remote machine:
+Transport it to a machine with Singularity installed:
 
 .. code-block:: bash
 
@@ -78,8 +70,8 @@ On the remote host, with Singularity installed, convert to SIF:
    singularity build llm.sif docker-archive:/path/on/remote/llm-image.tar
 
 
-Add a new agent
----------------
+Adding a new agent
+------------------
 
 Steps to support a new agent in the container and :file:`launch.py`:
 

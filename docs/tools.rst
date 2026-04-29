@@ -119,8 +119,29 @@ Runs the agent inside a container, assuming credentials are already available.
 - Starts :cmd:`codex`, :cmd:`claude`, :cmd:`pi`, or an interactive shell
 - Passes through mounts, env vars, cert bundles, and optional conda environments
 
-Examples
-~~~~~~~~
+Default config and credential mounts
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In addition to the current working directory, :cmd:`launch.py` mounts the
+following host paths into :file:`/home/devuser` inside the container when they
+exist:
+
+- ``codex``: :file:`~/.codex`
+- ``claude``: :file:`~/.claude` and :file:`~/.claude.json`
+- ``pi``: :file:`~/.pi`
+- ``shell``: :file:`~/.codex`, :file:`~/.claude`, :file:`~/.claude.json`, and :file:`~/.pi`
+
+When Amazon Bedrock is enabled for the effective container environment,
+:file:`~/.aws` is also mounted:
+
+- ``claude``: when ``CLAUDE_CODE_USE_BEDROCK=1``
+- ``pi``: when ``PI_USE_BEDROCK=1``
+- ``shell``: when ``CLAUDE_CODE_USE_BEDROCK=1`` or ``PI_USE_BEDROCK=1``
+
+See :doc:`config-files` for what those files and directories contain.
+
+Example usage
+~~~~~~~~~~~~~
 
 .. note::
 

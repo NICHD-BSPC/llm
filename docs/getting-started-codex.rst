@@ -18,15 +18,12 @@ a container, this native version still needs to be set up because we need it to
 refresh login credentials.
 
 1. Install `Codex CLI <https://developers.openai.com/codex/cli>`__ on your local machine.
-2. Navigate to a directory you are comfortable letting Codex see. (this will
-   likely NOT be your home directory! Move to a subdirectory).
+2. Navigate to a directory you are comfortable letting Codex see (not your home directory)
 3. Run :cmd:`codex` from the terminal.
 4. When Codex starts, select the first login option, *Sign in with ChatGPT*.
-   This opens a browser for single sign-on. Codex waits in the background while
-   you log in.
+   A browser will open for single sign-on.
 5. After successful login, the running Codex instance detects the login
-   automatically. It will then ask for permission to work in the current
-   directory. If you say "no" it will quit immediately.
+   automatically. Allow permission to work in the current directory.
 6. Type in a prompt (even just the word "testing"). It's working if the model
    responds.
 7. Ctrl-C twice, or :cmd:`/exit` to quit.
