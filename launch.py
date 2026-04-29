@@ -447,8 +447,6 @@ class Launcher:
             # This initial path comes from running a bare ubuntu container and
             # inspecting its default PATH
             "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:"
-            # Claude Code will complain if this is not in the path
-            "/home/devuser/.local/bin"
         )
 
         # Add path-prepend if specified
