@@ -224,7 +224,8 @@ Refreshing credentials
 
 You must refresh credentials *outside the container* (see
 :ref:`container-notes-login-model`) but you don't need to stop the container to
-do this. For example, Claude Code running in a container may not be able to
+do this. See :ref:`ts-credentials-expired` for troubleshooting expired or
+missing credentials. For example, Claude Code running in a container may not be able to
 connect due to credentials expiring, but as soon as you use :ref:`refresh` and
 the credentials on the host are updated, Claude Code will immediately see them
 since they are mounted into the container. While Claude Code does retry
@@ -248,6 +249,8 @@ KEY=VALUE`` options.
      --conda-env ~/miniconda3/envs/env-to-use \
      --mount ~/data/examples \
      codex
+
+See :ref:`ts-conda` for troubleshooting conda environments in containers.
 
 However, if you mount binaries from a macOS ARM64 host, they will not run inside
 the container because of the architecture mismatch. There is a workaround but it

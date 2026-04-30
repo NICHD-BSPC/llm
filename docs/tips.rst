@@ -26,8 +26,10 @@ A collection of tips and guidance in no particular order:
   (for Claude or Pi) in the top level of the repo to keep track of information
   about the code base you're working on. This avoids the agent needing to search
   for the right files on every new session, which consumes excessive tokens.
+  See :doc:`config-files` for more on configuration files used by each agent.
 
 - Agents typically use :cmd:`ripgrep` (:cmd:`rg`) to search. Ripgrep respects
   :file:`.gitignore` files, so ensure conda envs are added to ``.gitignore`` to
   prevent agents from looking through the hundreds of thousands of files in
-  a typical env.
+  a typical env. See :ref:`ts-conda` for related container issues with conda
+  environments.

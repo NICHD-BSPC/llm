@@ -26,12 +26,13 @@ Prerequisites
 - AWS SSO is set up; see :doc:`aws-sso`.
 - You have successfully authenticated with :cmd:`aws sso login`.
 - :cmd:`aws-bedrock-token-generator-python` is installed. If you use the
-  environment in :doc:`conda-env`, it is already included there.
+  conda environment from :file:`env.yml` in the repository root, it is
+  already included there.
 
 Getting a token
 ---------------
 
-:cmd:`refresh.py` requests a 12-hour Bedrock token and reports the actual maximum
+:ref:`refresh` requests a 12-hour Bedrock token and reports the actual maximum
 duration based on the current AWS SSO credential expiry.
 
 The usual convention is to place this token in the

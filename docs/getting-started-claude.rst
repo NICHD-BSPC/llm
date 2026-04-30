@@ -137,7 +137,11 @@ Claude Code remote (Singularity)
 Session timeout
 ---------------
 
-Your AWS credentials will eventually time out, and when this happens Claude Code will have connection issues. If this happens mid-session, you can run :cmd:`refresh.py` on your local machine, with the ``--remote`` argument if your session is on a remote system.
+Your AWS credentials will eventually time out, and when this happens Claude Code
+will have connection issues. See :ref:`ts-credentials-expired` for how to
+diagnose this. If this happens mid-session, you can run :cmd:`refresh.py` on
+your local machine, with the ``--remote`` argument if your session is on
+a remote system.
 
 This will update the credentials files in place, and since they are mounted
 "live" into the container, the running Claude Code session will see the update,

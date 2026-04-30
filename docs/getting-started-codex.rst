@@ -95,6 +95,8 @@ above, do the following:
    It involves downloading your enterprise certificate bundle and passing it to
    :cmd:`launch.py` with ``--certs`` or ``LLM_DEVCONTAINER_CERTS``.
 
+   For other connection issues, see :doc:`troubleshooting`.
+
 
 Step 3: Remote Codex (Singularity)
 ----------------------------------

@@ -171,6 +171,7 @@ fails:
 - Verify your profile is configured: :cmd:`aws configure list`
 - Verify ``AWS_PROFILE`` is set correctly
 - Try logging in manually: :cmd:`aws sso login`
+- See :doc:`aws-sso` for the full SSO setup walkthrough
 
 .. _ts-ssl-tls:
 
@@ -192,6 +193,9 @@ a nonexistent or invalid file.
 
 Remote system issues
 --------------------
+
+Credentials must be refreshed on the local machine and pushed to the remote;
+see :ref:`container-notes-login-model` for why this is necessary.
 
 **Credentials not arriving on remote:**
 
@@ -232,8 +236,9 @@ Singularity-specific issues
 **Home directory warnings:**
 
 Singularity normally auto-mounts your home directory. :cmd:`launch.py`
-disables this for isolation. If you see warnings about home directory
-handling, they can generally be ignored.
+disables this for isolation (see :ref:`container-notes-persistent-mounts`).
+If you see warnings about home directory handling, they can generally be
+ignored.
 
 **File permission errors:**
 
@@ -334,3 +339,36 @@ interactively:
 
 This mounts credentials for all agents and drops you into a bash shell
 inside the container, where you can inspect the environment directly.
+
+Claude Code-specific issues
+---------------------------
+
+- Claude may display this:
+
+    Update available! Run: your package manager update command
+
+  The container uses the *stable* version of Claude Code as published to the
+  Debain repository. To double-check you can run the :cmd:`/doctor` command from
+  within Claude Code. For example, at the time of writing these docs, that update
+  message was being shown but :cmd:`/doctor` showed this, indicating that the
+  current version is in fact the stable version:
+
+  .. code-block:: text
+
+     Diagnostics
+     Currently running: package-manager (2.1.116)
+     Commit: 9e176d077241
+     Platform: linux-x64
+     Package manager: deb
+     Path: /usr/bin/claude
+     Config install method: not set
+     Search: OK (bundled)
+
+     Updates
+     Auto-updates: Managed by package manager
+     Auto-update channel: latest
+     Stable version: 2.1.116
+     Latest version: 2.1.123
+
+  In this case, the update is a false positive and can be ignored. Hopefully this
+  will be fixed in future stable versions.

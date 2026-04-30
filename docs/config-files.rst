@@ -7,6 +7,8 @@ tools in this repository.
 Codex
 -----
 
+See :doc:`getting-started-codex` for initial setup.
+
 - :file:`~/.codex`: Config, skills, persistent state directory. **Mounted into containers running Codex.**
 - :file:`~/.codex/config.toml`: Config file
 - :file:`./codex/auth.json`: Credentials
@@ -54,8 +56,8 @@ Both of these paths are **mounted into containers running Claude.**
 - :file:`~/.claude.json` – UI settings, metrics, and approved directories
 
 Most of the configuration we're using for Claude Code is in the environment
-variables, originally set up in :doc:`getting-started-claude`, and the AWS SSO
-setup.
+variables, originally set up in :doc:`getting-started-claude`, and the
+:doc:`aws-sso` setup.
 
 :file:`~/.claude/settings.json` needs to at least exist and have an empty JSON
 array in it, and :ref:`launch` sets this up by default. When you use the
@@ -116,6 +118,8 @@ AWS SSO
 
 Pi
 --
+
+See :doc:`getting-started-pi` for initial setup.
 
 - :file:`~/.pi`: Config, skill, persistent state directory. **Mounted into containers running Pi.**
 

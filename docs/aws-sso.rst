@@ -68,8 +68,6 @@ see :doc:`bedrock-keys`.
 - Install the `AWS Command Line Interface (AWS CLI) Version 2 <https://aws.amazon.com/cli/>`_
   and ensure it is on your ``$PATH``.
 
-  - If you plan to use the container tools in this repo, create the environment
-    documented at :doc:`conda-env`.
   - If you already have it installed, make sure you are using version 2. See
     the `v1 to v2 migration docs <https://docs.aws.amazon.com/cli/latest/userguide/cliv2-migration.html>`_
     if you need to upgrade.
