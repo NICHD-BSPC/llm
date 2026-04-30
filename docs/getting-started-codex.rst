@@ -64,7 +64,7 @@ above, do the following:
 
    .. code-block:: bash
 
-      launch.py codex --image-name ghcr.io/nichd-bspc/llm
+      launch.py codex
 
 5. Similar to above, submit a prompt to confirm that the model replies.
 6. Ctrl-C twice, or :cmd:`/exit` to quit.
@@ -151,6 +151,8 @@ Next, we'll run Codex on a remote system (like NIH's Biowulf HPC).
 
 Step 4: Configure Codex
 -----------------------
+
+See :ref:`config-codex` for configuration.
 
 Step 5: Routine usage
 ---------------------

@@ -18,7 +18,6 @@ class LaunchTests(unittest.TestCase):
         self.home.mkdir()
         self.workspace = self.tmp_path / "workspace"
         self.workspace.mkdir()
-        self.container_local = self.tmp_path / "container-local"
 
         self.original_cwd = os.getcwd()
         os.chdir(self.workspace)
@@ -29,25 +28,21 @@ class LaunchTests(unittest.TestCase):
         self.addCleanup(self.env_patch.stop)
 
     def make_launcher(self, argv):
-        args = launch.parse_args(
-            [
-                "--dry-run",
-                "--container-local-host-dir",
-                str(self.container_local),
-                *argv,
-            ]
-        )
+        args = launch.parse_args(["--dry-run", *argv])
         return launch.Launcher(args)
 
     def touch(self, path):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("")
 
-    def assert_mount_present(self, mounts, host_path, container_path):
-        self.assertIn((str(host_path), container_path), mounts)
+    def assert_mount_present(self, mounts, host_path, container_path, readonly=False):
+        self.assertIn((str(host_path), container_path, readonly), mounts)
 
     def assert_mount_missing(self, mounts, host_path, container_path):
-        self.assertNotIn((str(host_path), container_path), mounts)
+        host_str = str(host_path)
+        for h, c, _ in mounts:
+            if h == host_str and c == container_path:
+                self.fail(f"Mount ({host_str}, {container_path}) unexpectedly present")
 
     def test_claude_passthrough_disabled_by_default(self):
         for cmd in ("claude", "shell"):
@@ -295,7 +290,6 @@ class LaunchTests(unittest.TestCase):
 
         self.assertFalse((self.home / ".claude").exists())
         self.assertFalse((self.home / ".claude.json").exists())
-        self.assertFalse(self.container_local.exists())
 
         with redirect_stdout(io.StringIO()) as stdout:
             launcher.run()
@@ -303,7 +297,6 @@ class LaunchTests(unittest.TestCase):
         self.assertIn("claude", stdout.getvalue())
         self.assertFalse((self.home / ".claude").exists())
         self.assertFalse((self.home / ".claude.json").exists())
-        self.assertFalse(self.container_local.exists())
 
     def test_codex_does_not_inherit_claude_or_aws_env(self):
         with mock.patch.dict(
@@ -347,7 +340,7 @@ class LaunchTests(unittest.TestCase):
             self.assertEqual(env["SSL_CERT_FILE"], launch.CONTAINER_CERTS_PATH)
             self.assertEqual(env["AWS_CA_BUNDLE"], launch.CONTAINER_CERTS_PATH)
             self.assert_mount_present(
-                mounts, certs_path.resolve(), launch.CONTAINER_CERTS_PATH
+                mounts, certs_path.resolve(), launch.CONTAINER_CERTS_PATH, readonly=True
             )
 
     def test_certs_flag_overrides_launcher_env_var(self):
@@ -367,7 +360,7 @@ class LaunchTests(unittest.TestCase):
 
             self.assertEqual(launcher.args.certs, str(override_certs.resolve()))
             self.assert_mount_present(
-                mounts, override_certs.resolve(), launch.CONTAINER_CERTS_PATH
+                mounts, override_certs.resolve(), launch.CONTAINER_CERTS_PATH, readonly=True
             )
             self.assert_mount_missing(
                 mounts, default_certs.resolve(), launch.CONTAINER_CERTS_PATH
@@ -401,6 +394,27 @@ class LaunchTests(unittest.TestCase):
         )
 
         self.assertEqual(launcher.args.sif_path, "oras://example.invalid/image")
+
+    def test_singularity_command_keeps_home_env_without_home_override(self):
+        launcher = self.make_launcher(
+            [
+                "--backend",
+                "singularity",
+                "--sif-path",
+                "oras://example.invalid/image",
+                "codex",
+            ]
+        )
+
+        env = launcher.build_env_vars()
+        mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["codex"], env)
+        cmd = launcher.backend.build_command(
+            env, mounts, launch.SUBCOMMAND_CONFIG["codex"]["command"]
+        )
+
+        self.assertIn("--env", cmd)
+        self.assertIn("HOME=/home/devuser", cmd)
+        self.assertNotIn("--home", cmd)
 
     def test_relative_path_prepend_uses_workspace_mount(self):
         launcher = self.make_launcher(
@@ -515,22 +529,6 @@ class LaunchTests(unittest.TestCase):
         self.assertIn("/home/devuser/.codex", output)
         self.assertIn("/home/devuser/.codex/files", output)
 
-    def test_does_not_warn_when_default_mount_host_paths_nest(self):
-        nested_local = self.workspace / "container-local"
-        launcher = launch.Launcher(
-            launch.parse_args(
-                [
-                    "--dry-run",
-                    "--container-local-host-dir",
-                    str(nested_local),
-                    "codex",
-                ]
-            )
-        )
-
-        with self.assertNoLogs(launch.LOGGER, level="WARNING"):
-            launcher.build_mounts(launch.SUBCOMMAND_CONFIG["codex"])
-
     def test_verbose_logs_credential_mount_status(self):
         (self.home / ".codex").mkdir()
         launcher = launch.Launcher(
@@ -538,8 +536,6 @@ class LaunchTests(unittest.TestCase):
                 [
                     "--dry-run",
                     "--verbose",
-                    "--container-local-host-dir",
-                    str(self.container_local),
                     "codex",
                 ]
             )

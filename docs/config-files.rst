@@ -4,8 +4,10 @@ Configuration and credential files
 This page describes the configuration and credential files used by the agent
 tools in this repository.
 
-Codex
------
+.. _config-codex:
+
+Configure Codex
+---------------
 
 See :doc:`getting-started-codex` for initial setup.
 
@@ -47,8 +49,8 @@ Here is an example :file:`~/.codex/config.toml` to use.
 
 See `Codex config basics <https://developers.openai.com/codex/config-basic>`__ for more.
 
-Claude Code
------------
+Configure Claude Code
+---------------------
 
 Both of these paths are **mounted into containers running Claude.**
 
@@ -109,15 +111,15 @@ See that :file:`claude-status.sh` file for tips on how to modify.
 See `Claude Code Settings <https://code.claude.com/docs/en/settings>`__ for more.
 
 
-AWS SSO
--------
+Configure AWS SSO
+-----------------
 
 - :file:`~/.aws`: Config directory. **Mounted into containers running Claude or Pi with Bedrock.**
 - :file:`~/.aws/config`: contains profile information (SSO session & account ID)
 - :file:`~/.aws/sso`: credentials for SSO
 
-Pi
---
+Configure Pi
+------------
 
 See :doc:`getting-started-pi` for initial setup.
 

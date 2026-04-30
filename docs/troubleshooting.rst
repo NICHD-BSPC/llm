@@ -343,15 +343,16 @@ inside the container, where you can inspect the environment directly.
 Claude Code-specific issues
 ---------------------------
 
-- Claude may display this:
+- **Update notice:** Claude may display
 
-    Update available! Run: your package manager update command
+    ``Update available! Run: your package manager update command``
 
-  The container uses the *stable* version of Claude Code as published to the
-  Debain repository. To double-check you can run the :cmd:`/doctor` command from
-  within Claude Code. For example, at the time of writing these docs, that update
-  message was being shown but :cmd:`/doctor` showed this, indicating that the
-  current version is in fact the stable version:
+  This is usually a false positive. The container uses the *stable* version of
+  Claude Code as published to the Debain repository. To double-check you can
+  run the :cmd:`/doctor` command from within Claude Code. For example, at the
+  time of writing these docs, that update message was being shown but
+  :cmd:`/doctor` showed the following, indicating that the current version is
+  in fact the stable version:
 
   .. code-block:: text
 
@@ -372,3 +373,8 @@ Claude Code-specific issues
 
   In this case, the update is a false positive and can be ignored. Hopefully this
   will be fixed in future stable versions.
+
+- **Copying text:** In recent versions, by default Claude Code will
+  *automatically copy* text that you select. If you are used to other text
+  selection mechanisms (like tmux), you can use :cmd:`/config` and change *Copy
+  on select* to *false*. This will add a new entry in :file:`~/.claude.json`.
