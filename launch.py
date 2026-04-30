@@ -218,10 +218,31 @@ class SingularityBackend(Backend):
         # Singularity complains if $HOME is provided, and --home requires
         # either a host location or a host:mount pair. So we create an empty
         # temp directory to provide as the home.
-        home = env_vars["HOME"]
+        #
+        # Testing notes:
+        #
+        # --contain: $HOME is set to host's but is empty. /tmp not mounted
+        #     (when --contain not used, /tmp from host is mounted)
+        # --no-home: $HOME is set to host's but doesn't exist.
+        # --home $(tmp):/home/devuser: $HOME set to /home/devuser; exists;
+        #      additional mounts inside there (like ~/.claude coming from host) do
+        #      work
+        # --env HOME=/home/devuser gives warning "WARNING: Overriding HOME
+        #      environment variable with SINGULARITYENV_HOME is not permitted"
+        #
+        # --no-home + --home: keeps the container's orig home (like .npm leftover from install)
+        # --home: allows mounts, but does not keep container's orig home
+        #
+        # So we don't need $HOME (and including it gives us the warning). We
+        # don't need --no-home, since that (somewhat counterintuitively) DOES
+        # give us the *built container's* home contents. We should use
+        # --contain because it avoids mounting /tmp.
+        #
+        home = env_vars.pop("HOME")
         tmp = tempfile.mkdtemp()
 
         env_args = self.build_env_args(env_vars)
+
 
         mount_args = self.build_mount_args(mounts)
 
@@ -230,10 +251,9 @@ class SingularityBackend(Backend):
             self.command, "exec",
             *env_args,
             *mount_args,
-            "--contain", 
-            "--home", f"{tmp}:{home}", 
-            "--no-home",
-            "--cleanenv",
+            "--home", f"{tmp}:{home}", # creates an empty dir; we can mount into it.
+            "--contain",  # avoid mounting /tmp
+            "--cleanenv", # don't inherit ALL of the env
             "--pwd", args.workspace_mount or os.getcwd(),
             args.sif_path,
             *command_args,
