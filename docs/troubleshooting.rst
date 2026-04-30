@@ -378,3 +378,15 @@ Claude Code-specific issues
   *automatically copy* text that you select. If you are used to other text
   selection mechanisms (like tmux), you can use :cmd:`/config` and change *Copy
   on select* to *false*. This will add a new entry in :file:`~/.claude.json`.
+
+Codex-specific issues
+---------------------
+
+- **WebSockets to HTTPS warning:** In Codex, you may see the following message:
+
+  ``Falling back from WebSockets to HTTPS transport. stream disconnected before completion: invalid peer certificate: UnknownIssuer``
+
+  This is usually due to setting certificates with ``--certs`` or
+  ``$LLM_DEVCONTAINER_CERTS`` when they are not needed. Omit ``--certs`` and
+  unset ``LLM_DEVCONTAINER_CERTS``.
+
