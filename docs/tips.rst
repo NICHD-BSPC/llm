@@ -33,3 +33,9 @@ A collection of tips and guidance in no particular order:
   prevent agents from looking through the hundreds of thousands of files in
   a typical env. See :ref:`ts-conda` for related container issues with conda
   environments.
+
+- If you are giving the agent access to a conda env, and you have data in your
+  working directory, consider making a *complete copy* of the directory to work
+  in and give the agent access to that copy. When done, commit any changes to
+  git, and port them over to the original directory. This avoids problematic
+  situations like the agent running a command that changes data.
