@@ -26,6 +26,7 @@ Contents
    tools
    config-files
    running-containers
+   troubleshooting
 
 **Details**
 
