@@ -24,6 +24,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path, PurePosixPath
 
 
@@ -214,7 +215,14 @@ class SingularityBackend(Backend):
     def build_command(self, env_vars, mounts, command_args):
         args = self.args
 
+        # Singularity complains if $HOME is provided, and --home requires
+        # either a host location or a host:mount pair. So we create an empty
+        # temp directory to provide as the home.
+        home = env_vars["HOME"]
+        tmp = tempfile.mkdtemp()
+
         env_args = self.build_env_args(env_vars)
+
         mount_args = self.build_mount_args(mounts)
 
         # fmt: off
@@ -222,6 +230,9 @@ class SingularityBackend(Backend):
             self.command, "exec",
             *env_args,
             *mount_args,
+            "--contain", 
+            "--home", f"{tmp}:{home}", 
+            "--no-home",
             "--cleanenv",
             "--pwd", args.workspace_mount or os.getcwd(),
             args.sif_path,
