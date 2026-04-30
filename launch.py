@@ -215,34 +215,25 @@ class SingularityBackend(Backend):
     def build_command(self, env_vars, mounts, command_args):
         args = self.args
 
-        # Singularity complains if $HOME is provided, and --home requires
-        # either a host location or a host:mount pair. So we create an empty
-        # temp directory to provide as the home.
+        # Notes on Singularity arguments:
         #
-        # Testing notes:
+        # We want a clean home directory inside the container that still accepts
+        # mounts under $HOME.
         #
-        # --contain: $HOME is set to host's but is empty. /tmp not mounted
-        #     (when --contain not used, /tmp from host is mounted)
-        # --no-home: $HOME is set to host's but doesn't exist.
-        # --home $(tmp):/home/devuser: $HOME set to /home/devuser; exists;
-        #      additional mounts inside there (like ~/.claude coming from host) do
-        #      work
-        # --env HOME=/home/devuser gives warning "WARNING: Overriding HOME
-        #      environment variable with SINGULARITYENV_HOME is not permitted"
+        # Passing HOME through the environment (--env HOME=/home/devuser) triggers a
+        # Singularity warning
         #
-        # --no-home + --home: keeps the container's orig home (like .npm leftover from install)
-        # --home: allows mounts, but does not keep container's orig home
+        # --no-home avoids mounting the host's home, but preserves the image's baked-in home contents.
         #
-        # So we don't need $HOME (and including it gives us the warning). We
-        # don't need --no-home, since that (somewhat counterintuitively) DOES
-        # give us the *built container's* home contents. We should use
-        # --contain because it avoids mounting /tmp.
+        # --contain avoids mounting the host's home as well as the host's entire /tmp
+        #
+        # Here we use --home <src>:<dest> to mount an empty temp dir into which
+        # other dirs (like `./claude`) can be mounted.
         #
         home = env_vars.pop("HOME")
         tmp = tempfile.mkdtemp()
 
         env_args = self.build_env_args(env_vars)
-
 
         mount_args = self.build_mount_args(mounts)
 
