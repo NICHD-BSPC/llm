@@ -724,6 +724,7 @@ class Launcher:
             return shlex.split(value)
         except ValueError as exc:
             fatal(f"failed to parse ${env_var_name}: {exc}")
+            return []
 
     def run(self):
         """Main entry point for launching a container."""
