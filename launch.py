@@ -76,6 +76,7 @@ CERT_FILE_ENV_VARS = (
 DEFAULT_PODMAN_IMAGE = "ghcr.io/nichd-bspc/llm"
 DEFAULT_SINGULARITY_IMAGE = "oras://ghcr.io/nichd-bspc/llm-sif"
 DEFAULT_CERTS_ENV_VAR = "LLM_DEVCONTAINER_CERTS"
+DEFAULT_MOUNTS_ENV_VAR = "LLM_DEVCONTAINER_MOUNTS"
 LOGGER = logging.getLogger("launch")
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -311,8 +312,11 @@ class Launcher:
                 fatal(f"--certs must point to a file, got: {args.certs}")
             args.certs = str(certs_path)
 
+        env_mount_specs = self._parse_mounts_env_var(DEFAULT_MOUNTS_ENV_VAR)
+        cli_mount_specs = list(args.mount)
         args.extra_mounts = [
-            self._parse_mount_spec(mount_spec) for mount_spec in args.mount
+            self._parse_mount_spec(mount_spec)
+            for mount_spec in [*env_mount_specs, *cli_mount_specs]
         ]
 
         if args.path_prepend and PurePosixPath(args.path_prepend).is_absolute():
@@ -710,6 +714,17 @@ class Launcher:
 
         return host, container, readonly
 
+    def _parse_mounts_env_var(self, env_var_name):
+        """Parse a shell-style env var containing default mount specs."""
+        value = os.environ.get(env_var_name)
+        if not value:
+            return []
+
+        try:
+            return shlex.split(value)
+        except ValueError as exc:
+            fatal(f"failed to parse ${env_var_name}: {exc}")
+
     def run(self):
         """Main entry point for launching a container."""
         args = self.args
@@ -814,7 +829,11 @@ def build_parser():
         "--mount",
         action="append",
         default=[],
-        help="Additional mount: HOST_PATH, HOST_PATH:CONTAINER_PATH, or HOST_PATH:CONTAINER_PATH:ro (repeatable)",
+        help=(
+            "Additional mount: HOST_PATH, HOST_PATH:CONTAINER_PATH, or "
+            "HOST_PATH:CONTAINER_PATH:ro (repeatable). Defaults from "
+            f"${DEFAULT_MOUNTS_ENV_VAR} are also applied when set."
+        ),
     )
     parser.add_argument(
         "--read-only",

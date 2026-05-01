@@ -216,6 +216,14 @@ default, this setup disables that behavior to reduce exposure.
 Only the credentials and config needed for each tool is mounted -- unless you
 call :ref:`launch` with ``shell`` which will mount them all.
 
+If you regularly mount the same extra paths, set
+``LLM_DEVCONTAINER_MOUNTS`` to a shell-style list of mount specs using the same
+format as ``--mount``. For example:
+
+.. code-block:: bash
+
+   export LLM_DEVCONTAINER_MOUNTS="$HOME/data $HOME/.gitconfig:/home/devuser/.gitconfig:ro"
+
 The user inside the container is called `devuser`, and the home directory is
 created at `/home/devuser` inside the container image.
 
