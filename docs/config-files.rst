@@ -4,8 +4,12 @@ Configuration and credential files
 This page describes the configuration and credential files used by the agent
 tools in this repository.
 
-Codex
------
+.. _config-codex:
+
+Configure Codex
+---------------
+
+See :doc:`getting-started-codex` for initial setup.
 
 - :file:`~/.codex`: Config, skills, persistent state directory. **Mounted into containers running Codex.**
 - :file:`~/.codex/config.toml`: Config file
@@ -45,8 +49,8 @@ Here is an example :file:`~/.codex/config.toml` to use.
 
 See `Codex config basics <https://developers.openai.com/codex/config-basic>`__ for more.
 
-Claude Code
------------
+Configure Claude Code
+---------------------
 
 Both of these paths are **mounted into containers running Claude.**
 
@@ -54,8 +58,8 @@ Both of these paths are **mounted into containers running Claude.**
 - :file:`~/.claude.json` – UI settings, metrics, and approved directories
 
 Most of the configuration we're using for Claude Code is in the environment
-variables, originally set up in :doc:`getting-started-claude`, and the AWS SSO
-setup.
+variables, originally set up in :doc:`getting-started-claude`, and the
+:doc:`aws-sso` setup.
 
 :file:`~/.claude/settings.json` needs to at least exist and have an empty JSON
 array in it, and :ref:`launch` sets this up by default. When you use the
@@ -107,15 +111,17 @@ See that :file:`claude-status.sh` file for tips on how to modify.
 See `Claude Code Settings <https://code.claude.com/docs/en/settings>`__ for more.
 
 
-AWS SSO
--------
+Configure AWS SSO
+-----------------
 
 - :file:`~/.aws`: Config directory. **Mounted into containers running Claude or Pi with Bedrock.**
 - :file:`~/.aws/config`: contains profile information (SSO session & account ID)
 - :file:`~/.aws/sso`: credentials for SSO
 
-Pi
---
+Configure Pi
+------------
+
+See :doc:`getting-started-pi` for initial setup.
 
 - :file:`~/.pi`: Config, skill, persistent state directory. **Mounted into containers running Pi.**
 

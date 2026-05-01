@@ -20,3 +20,7 @@ Then run like this:
 .. code-block:: bash
 
    launch.py pi
+
+See :doc:`tools` for additional :ref:`launch` options (extra mounts,
+certificates, dry-run, etc.) and :doc:`aws-sso` for the full SSO setup if
+you have not already completed it as part of :doc:`getting-started-claude`.

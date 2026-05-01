@@ -198,6 +198,13 @@ Let the container see something outside the working directory:
 
    launch.py --mount /data/experiment1 codex
 
+To keep a default set of extra mounts, put them in
+``LLM_DEVCONTAINER_MOUNTS`` as a shell-style list:
+
+.. code-block:: bash
+
+   export LLM_DEVCONTAINER_MOUNTS="$HOME/data /scratch/shared:/scratch/shared:ro"
+
 Mount a directory read-only inside the container:
 
 .. code-block:: bash
@@ -257,7 +264,7 @@ Force podman instead of Singularity:
    launch.py --backend podman codex
 
 Print out the command to be run as composed by :file:`launch.py` and then exit
-without running. Useful for debugging:
+without running. Useful for debugging (see also :ref:`ts-dry-run`):
 
 .. code-block:: bash
 
@@ -334,5 +341,5 @@ Builds the local Podman image.
    ./build.py
    ./build.py --no-cache
 
-See :doc:`building-containers`. Image maintainers should keep a full checkout
+See :doc:`developer`. Image maintainers should keep a full checkout
 and run :cmd:`./build.py` from the repo root.

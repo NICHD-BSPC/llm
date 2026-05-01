@@ -39,7 +39,10 @@ Then either:
 
       launch.py --certs ~/.certs.pem codex
 
-The same file is also used during image builds; see :doc:`building-containers`.
+The same file is also used during image builds; see :doc:`developer`.
+
+If you are still having connection issues after setting up certificates, see
+:ref:`ts-ssl-tls` for more troubleshooting steps.
 
 .. seealso::
 

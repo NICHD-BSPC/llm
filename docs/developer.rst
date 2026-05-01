@@ -42,10 +42,11 @@ When running :cmd:`build.py`:
 .. tip::
 
    Test with :cmd:`refresh.py` to refresh credentials, followed by
-   :cmd:`launch.py --image-name llm-devcontainer codex`. This starts the
-   container, mounts the current directory to the same path inside the
-   container, and immediately starts Codex. Use ``!``-prefixed shell commands
-   such as ``! ls ~`` to verify that other host directories are not mounted.
+   :cmd:`launch.py --image-name llm-devcontainer codex` (see :ref:`launch`
+   for all options). This starts the container, mounts the current directory
+   to the same path inside the container, and immediately starts Codex. Use
+   ``!``-prefixed shell commands such as ``! ls ~`` to verify that other host
+   directories are not mounted.
 
 
 2. Convert to Singularity image
@@ -76,9 +77,10 @@ Adding a new agent
 Steps to support a new agent in the container and :file:`launch.py`:
 
 - Install it in Dockerfile
-- Add credential paths to ``CREDENTIAL_PATHS`` in :file:`launch.py`
+- Add credential paths to ``CREDENTIAL_PATHS`` in :file:`launch.py` (see :ref:`launch` for current defaults)
 - Add command and credentials reference to ``SUBCOMMAND_CONFIG`` in :file:`launch.py`
 - Append credentials to shell section of ``SUBCOMMAND_CONFIG`` as well
+- Document credential and config files in :doc:`config-files`
 - If using Bedrock, add a detection method to ``Launcher._bedrock_enabled()``.
   Make up a new env var if needed
 - Pass thru ``Launcher._host_env_with_prefixes()`` if relevant
