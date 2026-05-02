@@ -150,15 +150,30 @@ class PodmanBackend(Backend):
     mount_flag = "--volume"
 
     def validate_image(self):
-        """Check that the podman image exists."""
+        """Check that the podman image exists, pulling the default on demand."""
         result = subprocess.run(
             [self.command, "image", "exists", self.args.image_name],
             capture_output=True,
         )
-        if result.returncode != 0:
+        if result.returncode == 0:
+            return
+
+        if self.args.image_name != DEFAULT_PODMAN_IMAGE:
             fatal(
                 f"podman image '{self.args.image_name}' not found. "
                 "Build it first or specify a different image with --image-name."
+            )
+
+        LOGGER.info("pulling default podman image '%s'", self.args.image_name)
+        try:
+            subprocess.run(
+                [self.command, "pull", self.args.image_name],
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            fatal(
+                f"failed to pull default podman image '{self.args.image_name}'. "
+                "Check your network or try 'podman pull' manually."
             )
 
     def build_command(self, env_vars, mounts, command_args):

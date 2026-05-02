@@ -49,6 +49,9 @@ Here is an example :file:`~/.codex/config.toml` to use.
 
 See `Codex config basics <https://developers.openai.com/codex/config-basic>`__ for more.
 
+
+.. _config-claude:
+
 Configure Claude Code
 ---------------------
 
@@ -62,9 +65,9 @@ variables, originally set up in :doc:`getting-started-claude`, and the
 :doc:`aws-sso` setup.
 
 :file:`~/.claude/settings.json` needs to at least exist and have an empty JSON
-array in it, and :ref:`launch` sets this up by default. When you use the
-:cmd:`/model` command, it will enter that choice into this file for
-persistence, after which this file will look something like:
+array in it, and :ref:`launch` does this automatically by default. When you use the
+:cmd:`/model` command within Claude Code, it will enter that choice into this
+file for persistence, after which this file will look something like:
 
 .. code-block:: json
 
@@ -73,8 +76,9 @@ persistence, after which this file will look something like:
   }
 
 You can prevent the model from accessing paths. For example, to exclude
-the :file:`data` and :file:`env` directories in the current project, you might
-include this in a :file:`.claude/settings.json` in the current project:
+the :file:`data` and :file:`env` directories from being read in the current
+project, you might include this in a :file:`.claude/settings.json` in the
+current project:
 
 .. code-block:: json
 
@@ -82,6 +86,8 @@ include this in a :file:`.claude/settings.json` in the current project:
      "permissions": {"deny": ["Read(./data)", "Read(./env)"]}
   }
 
+In such cases, you should probably include the directories in a ``.gitignore``
+file so that tools like ``ripgrep`` (``rg``) won't look in there either.
 
 If you copy the :file:`tools/claude-status.sh` file from this repo to your
 :file:`~/.claude` directory, you can add the following block to

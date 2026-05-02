@@ -16,8 +16,8 @@ models in a similar fashion on STRIDES; that is not yet documented here.
 enrollment <https://cloud.nih.gov/enrollment/>`__.
 
 
-Initial AWS SSO setup
----------------------
+Step 1. Initial AWS SSO setup
+-----------------------------
 
 This first section needs to be done once to make sure accounts are connected
 and you can authenticate.
@@ -27,7 +27,10 @@ and you can authenticate.
    CLI v2, and authenticating. You should be able to successfully log in with
    :cmd:`aws sso login`.
 
-2. Export these environment variables, for example in :file:`~/.bashrc`:
+Step 2. Export env vars
+-----------------------
+
+Export these environment variables, for example in :file:`~/.bashrc`:
 
    .. code-block:: bash
 
@@ -66,11 +69,11 @@ and you can authenticate.
    Although the `Claude Code on Amazon Bedrock
    <https://code.claude.com/docs/en/amazon-bedrock>`__ docs describe adding
    ``"awsAuthRefresh": "aws sso login --profile myprofile"`` to your config,
-   this is only for when you're running Claude Code without a container. The
+   this is only for when you're running Claude Code *without* a container. The
    :ref:`refresh` script will take care of this for us.
 
-Claude Code locally (Podman container)
---------------------------------------
+Step 3. Claude Code locally (Podman container)
+----------------------------------------------
 
 Since we're using AWS SSO to authenticate, **we do not need to install Claude
 Code locally**. This is in contrast to Codex, which we had to install locally in
@@ -97,8 +100,8 @@ order to be able to use `codex login`.
    - Host variables starting with ``CLAUDE_CODE`` were passed through to the container
    - Because ``CLAUDE_CODE_USE_BEDROCK=1`` was set, host ``AWS_*`` variables and the :file:`~/.aws` directory were also passed through so Claude could use AWS credentials
 
-Claude Code remote (Singularity)
---------------------------------
+Step 4. Claude Code remote (Singularity)
+----------------------------------------
 
 1. Run the following locally (this example uses the :nih:`NIH-specific` host, biowulf.nih.gov):
 
@@ -114,7 +117,7 @@ Claude Code remote (Singularity)
       sinteractive             # allocate interactive node
       module load singularity  # make Singularity available
 
-3. If you don't already have it available, download the :file:`launch.py` script from the repo to the remote.
+3. If you don't already have it available, download the :ref:`launch` script from the repo to the remote.
 
 4. Run the following:
 
@@ -134,8 +137,14 @@ Claude Code remote (Singularity)
      ``CLAUDE_CODE_USE_BEDROCK=1``, that includes host ``AWS_*`` variables and
      :file:`~/.aws`.
 
-Session timeout
----------------
+Step 5. Configure Claude Code
+-----------------------------
+
+See :ref:`config-claude` for details.
+
+
+Step 6. Routine usage
+---------------------
 
 Your AWS credentials will eventually time out, and when this happens Claude Code
 will have connection issues. See :ref:`ts-credentials-expired` for how to
@@ -147,3 +156,14 @@ This will update the credentials files in place, and since they are mounted
 "live" into the container, the running Claude Code session will see the update,
 and will be able to connect on the next prompt submission.
 
+Each time you start the container, you will use the latest built image from
+this repo, ``ghcr.io/nichd-bspc/llm:latest`` for podman or
+``oras://ghcr.io/nichd-bspc/llm-sif:latest`` for Singularity.
+
+
+.. seealso::
+
+   - `How Claude Code works <https://code.claude.com/docs/en/how-claude-code-works>`__
+   - `Understanding the context window <https://code.claude.com/docs/en/context-window>`__
+   - `Common workflows <https://code.claude.com/docs/en/common-workflows>`__
+   - `Explore the .claude directory <https://code.claude.com/docs/en/claude-directory>`__
