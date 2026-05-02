@@ -1,7 +1,7 @@
 LLM containers
 ==============
 
-In `NICHD's Bioinformatics and Scientific Programming Core <https://bioinformatics.nichd.nih.gov>`__, we wanted to use multiple LLM agent tools in a secure way on multiple systems, but there was nothing available for our particular requirements.
+In `NICHD's Bioinformatics and Scientific Programming Core <https://www.nichd.nih.gov/about/org/dir/other-facilities/cores/bioinformatics>`__, we wanted to use multiple LLM agent tools in a secure way on multiple systems -- specifically, in :ref:`isolated containers <why-containers>` to reduce risk -- but there was nothing available for our particular requirements.
 
 So, this repo now supports:
 
@@ -48,3 +48,5 @@ Or, to use on a remote machine:
    launch.py codex
 
 **See** https://nichd-bspc.github.io/llm **for documentation.**
+
+**See** https://github.com/nichd-bspc/llm **for code.**

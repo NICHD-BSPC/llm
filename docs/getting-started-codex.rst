@@ -171,3 +171,9 @@ the `images page
 <https://github.com/NICHD-BSPC/llm/pkgs/container/llm/versions>`__.
 
 
+.. seealso::
+
+   - `Codex best practices <https://developers.openai.com/codex/learn/best-practices>`__
+   - `Codex features <https://developers.openai.com/codex/cli/features>`__
+   - `Codex slash commands <https://developers.openai.com/codex/cli/slash-commands>`__
+

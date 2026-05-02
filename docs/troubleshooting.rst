@@ -182,12 +182,24 @@ SSL/TLS connection errors
 enterprise networks. You may see messages about certificate verification
 failures, ``CERTIFICATE_VERIFY_FAILED``, or ``SSL: CERTIFICATE_VERIFY_FAILED``.
 
-The container does not have access to host-installed enterprise certificates.
-See :doc:`certificates` for full details.
+For example:
+
+.. code-block:: text
+
+   ⚠ MCP client for `codex_apps` failed to start: MCP startup failed: handshaking with MCP server failed: Send message error Transport [rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client
+  ::StreamableHttpClientWorker<codex_rmcp_client::http_client_adapter::StreamableHttpClientAdapter>>] error: Client error: HTTP request failed: http/request failed: error sending request for url
+  (https://chatgpt.com/backend-api/wham/apps), when send initialize request
+
+  ⚠ MCP startup incomplete (failed: codex_apps)
+
+The issue is that the container does not have access to host-installed
+enterprise certificates. See :doc:`certificates` for full details.
 
 If you are **not** on VPN or an enterprise network and still see SSL errors,
-make sure you are not accidentally setting ``LLM_DEVCONTAINER_CERTS`` to
-a nonexistent or invalid file.
+make sure you are not accidentally setting ``LLM_DEVCONTAINER_CERTS``. In some
+cases, being on an enterprise network is fine (and doesn't need ``--certs``)
+but a VPN connection to the same network *does* need ``--certs``.
+
 
 .. _ts-remote:
 
@@ -286,8 +298,15 @@ check for TLS interception issues (:ref:`ts-ssl-tls`).
 **Architecture mismatch:**
 
 The container is built for ``linux/amd64``. On Apple Silicon Macs, Podman
-handles the emulation transparently. If you encounter architecture-related
-errors, ensure your Podman machine is configured for ``amd64`` emulation.
+handles the emulation transparently, but you may see a warning like this, which
+is expected:
+
+.. code-block:: text
+
+   WARNING: image platform (linux/amd64) does not match the expected platform (linux/arm64)
+
+If you encounter architecture-related errors, ensure your Podman machine is
+configured for ``amd64`` emulation.
 
 .. _ts-conda:
 
