@@ -14,12 +14,23 @@ CREDENTIAL_PATHS = {
     "codex": {
         "auth": ("~/.codex/auth.json",),
         "config": ("~/.codex/config.toml",),
-        "full": ("~/.codex",),
+        "full": (
+            "~/.codex/config.toml",
+            "~/.codex/auth.json",
+            "~/.codex/skills",
+            "~/.codex/memories",
+        ),
     },
     "claude": {
         "auth": ("~/.aws/config", "~/.aws/sso/cache"),
         "config": ("~/.claude/settings.json", "~/.claude.json"),
-        "full": ("~/.claude", "~/.aws"),
+        "full": (
+            "~/.claude/settings.json",
+            "~/.claude.json",
+            "~/.claude/skills",
+            "~/.aws/config",
+            "~/.aws/sso/cache",
+        ),
     },
     "pi": {
         "auth": ("~/.aws/config", "~/.aws/sso/cache"),
