@@ -21,6 +21,18 @@ CREDENTIAL_PATHS = {
         "config": ("~/.claude/settings.json", "~/.claude.json"),
         "full": ("~/.claude", "~/.aws"),
     },
+    "pi": {
+        "auth": ("~/.aws/config", "~/.aws/sso/cache"),
+        "config": ("~/.pi/agent/settings.json",),
+        "full": (
+            "~/.pi/agent/skills",
+            "~/.pi/agent/settings.json",
+            "~/.pi/agent/extensions",
+            "~/.pi/agent/auth.json",
+            "~/.aws/config",
+            "~/.aws/sso/cache",
+        ),
+    },
 }
 
 
@@ -188,7 +200,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--kind",
-        choices=("claude", "codex", "all", "bedrock"),
+        choices=("claude", "codex", "pi", "all", "bedrock"),
         default="all",
         help="Which credential set to sync (default: %(default)s)",
     )
@@ -229,7 +241,7 @@ def main() -> int:
                 print(f"    {path}")
         sys.exit(0)
 
-    if args.kind in ("all", "claude"):
+    if args.kind in ("all", "claude", "pi"):
         refresh_aws_sso()
     if args.kind in ("all", "codex"):
         refresh_codex()
