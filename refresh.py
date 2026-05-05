@@ -14,48 +14,90 @@ CREDENTIAL_PATHS = {
     "codex": {
         "auth": ("~/.codex/auth.json",),
         "config": ("~/.codex/config.toml",),
-        "full": ("~/.codex",),
+        "full": (
+            "~/.codex/config.toml",
+            "~/.codex/auth.json",
+            "~/.codex/skills",
+            "~/.codex/memories",
+        ),
     },
     "claude": {
         "auth": ("~/.aws/config", "~/.aws/sso/cache"),
         "config": ("~/.claude/settings.json", "~/.claude.json"),
-        "full": ("~/.claude", "~/.aws"),
+        "full": (
+            "~/.claude/settings.json",
+            "~/.claude.json",
+            "~/.claude/skills",
+            "~/.aws/config",
+            "~/.aws/sso/cache",
+        ),
+    },
+    "pi": {
+        "auth": ("~/.aws/config", "~/.aws/sso/cache"),
+        "config": ("~/.pi/agent/settings.json",),
+        "full": (
+            "~/.pi/agent/skills",
+            "~/.pi/agent/settings.json",
+            "~/.pi/agent/extensions",
+            "~/.pi/agent/auth.json",
+            "~/.aws/config",
+            "~/.aws/sso/cache",
+        ),
     },
 }
 
 
-def rsync(path, user, remote):
-    """Copy local path to remote"""
+def home_relative_path(path):
+    """Return a path relative to the user's home directory.
 
-    print(f"rsyncing {path} to {user}@{remote}")
+    Used for batching together rsync calls.
+    """
     local_path = os.path.expanduser(path)
-    # Keep `~` unexpanded in remote parent so the remote shell resolves it for
-    # the remote user.
-    remote_parent = os.path.dirname(path)
+    home_dir = os.path.abspath(os.path.expanduser("~"))
+    absolute_path = os.path.abspath(local_path)
+    if os.path.commonpath([home_dir, absolute_path]) != home_dir:
+        raise ValueError(
+            f"Path must be inside the home directory for batched rsync: {path}"
+        )
+    return os.path.relpath(absolute_path, home_dir)
+
+
+def rsync_paths(paths, user, remote):
+    """Copy multiple local paths to the remote home directory in one rsync call."""
+
+    if not paths:
+        return
+
     remote_host = f"{user}@{remote}" if user else remote
+    relative_paths = []
+    skipped_paths = []
 
-    if not os.path.exists(local_path):
-        raise FileNotFoundError(f"Local path does not exist: {local_path}")
+    for path in paths:
+        local_path = os.path.expanduser(path)
+        if not os.path.exists(local_path):
+            skipped_paths.append(path)
+            continue
+        relative_paths.append(home_relative_path(path))
 
-    subprocess.run(
-        [
-            "ssh",
-            remote_host,
-            "mkdir",
-            "-p",
-            remote_parent,
-        ],
-        check=True,
-    )
+    for path in skipped_paths:
+        print(f"skipping missing path: {path}", file=sys.stderr)
+
+    if not relative_paths:
+        print("no existing paths to rsync", file=sys.stderr)
+        return
+
+    print(f"rsyncing these paths to {remote_host}:~/...\n\n ", "\n  ".join(paths))
 
     subprocess.run(
         [
             "rsync",
             "-arv",
-            local_path,
-            f"{remote_host}:{remote_parent}",
+            "--relative",
+            *relative_paths,
+            f"{remote_host}:~/",
         ],
         check=True,
+        cwd=os.path.expanduser("~"),
     )
 
 
@@ -188,7 +230,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--kind",
-        choices=("claude", "codex", "all", "bedrock"),
+        choices=("claude", "codex", "pi", "all", "bedrock"),
         default="all",
         help="Which credential set to sync (default: %(default)s)",
     )
@@ -229,7 +271,7 @@ def main() -> int:
                 print(f"    {path}")
         sys.exit(0)
 
-    if args.kind in ("all", "claude"):
+    if args.kind in ("all", "claude", "pi"):
         refresh_aws_sso()
     if args.kind in ("all", "codex"):
         refresh_codex()
@@ -243,16 +285,12 @@ def main() -> int:
         return 0
 
     kinds = CREDENTIAL_PATHS.keys() if args.kind == "all" else [args.kind]
-    paths = [path for kind in kinds for path in CREDENTIAL_PATHS[kind]["auth"]]
-    full_paths = [path for kind in kinds for path in CREDENTIAL_PATHS[kind]["full"]]
+    paths = sorted(set([path for kind in kinds for path in CREDENTIAL_PATHS[kind]["auth"]]))
+    if args.full:
+        paths = sorted(set([path for kind in kinds for path in CREDENTIAL_PATHS[kind]["full"]]))
 
     if args.remote:
-        for path in paths:
-            rsync(path=path, user=args.user, remote=args.remote)
-        if args.full:
-            for path in full_paths:
-                rsync(path=path, user=args.user, remote=args.remote)
-
+        rsync_paths(paths=paths, user=args.user, remote=args.remote)
     else:
         print("No --remote specified; skipping push.")
 

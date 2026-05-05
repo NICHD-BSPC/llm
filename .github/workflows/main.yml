@@ -32,7 +32,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl podman
+          sudo apt-get install -y curl podman skopeo
 
       - name: Install Apptainer
         run: |
@@ -102,18 +102,26 @@ jobs:
           image_base="${{ env.REGISTRY }}/${repo_lc}"
           sha_tag="sha-${GITHUB_SHA}"
 
+          # Push image once under the sha tag to establish the digest
           podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:${sha_tag}"
           podman push "${image_base}:${sha_tag}"
-          podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:claude-${CLAUDE_VERSION}"
-          podman push "${image_base}:claude-${CLAUDE_VERSION}"
-          podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:codex-${CODEX_VERSION}"
-          podman push "${image_base}:codex-${CODEX_VERSION}"
-          podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:pi-${PI_VERSION}"
-          podman push "${image_base}:pi-${PI_VERSION}"
+
+          # Copy the same digest to all version tags so they all resolve to
+          # the identical manifest (skopeo copy by-digest guarantees this).
+          skopeo copy --all \
+            "docker://${image_base}:${sha_tag}" \
+            "docker://${image_base}:claude-${CLAUDE_VERSION}"
+          skopeo copy --all \
+            "docker://${image_base}:${sha_tag}" \
+            "docker://${image_base}:codex-${CODEX_VERSION}"
+          skopeo copy --all \
+            "docker://${image_base}:${sha_tag}" \
+            "docker://${image_base}:pi-${PI_VERSION}"
 
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:latest"
-            podman push "${image_base}:latest"
+            skopeo copy --all \
+              "docker://${image_base}:${sha_tag}" \
+              "docker://${image_base}:latest"
           fi
 
 
