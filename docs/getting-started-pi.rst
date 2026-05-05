@@ -21,6 +21,17 @@ Then run like this:
 
    launch.py pi
 
+On remote systems where Pi has trouble with proxy-driven AWS auth, use exported
+session credentials:
+
+.. code-block:: bash
+
+   # local machine
+   refresh.py --export-creds --remote your.remote.host
+
+   # remote shell
+   launch.py pi
+
 See :doc:`tools` for additional :ref:`launch` options (extra mounts,
 certificates, dry-run, etc.) and :doc:`aws-sso` for the full SSO setup if
 you have not already completed it as part of :doc:`getting-started-claude`.

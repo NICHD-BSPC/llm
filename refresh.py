@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 
 import argparse
+from configparser import RawConfigParser
 from datetime import datetime, timedelta, timezone
 import json
 import getpass
+from io import StringIO
 import os
-import shlex
 import subprocess
 import sys
 from typing import Optional
+
+AWS_EXPORT_PROFILE = "llm-export"
 
 CREDENTIAL_PATHS = {
     "codex": {
@@ -101,10 +104,10 @@ def rsync_paths(paths, user, remote):
     )
 
 
-def refresh_aws_sso():
+def refresh_aws_sso(profile=None):
     """Check AWS SSO credentials and refresh if needed."""
     try:
-        expiration = aws_credential_expiration()
+        expiration = aws_credential_expiration(profile)
         if expiration:
             print(f"AWS SSO credentials expire at: {expiration}", file=sys.stderr)
         else:
@@ -120,7 +123,10 @@ def refresh_aws_sso():
             file=sys.stderr,
         )
         try:
-            subprocess.run(["aws", "sso", "login"], check=True)
+            cmd = ["aws", "sso", "login"]
+            if profile:
+                cmd.extend(["--profile", profile])
+            subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as login_error:
             raise RuntimeError(
                 "Unable to refresh AWS SSO credentials. Run 'aws configure sso' "
@@ -146,14 +152,12 @@ def refresh_codex():
         subprocess.run(["codex", "login"], check=True)
 
 
-def aws_credential_expiration() -> Optional[str]:
+def aws_credential_expiration(profile=None) -> Optional[str]:
     """Return the AWS credential expiration string from the AWS CLI."""
-    result = subprocess.run(
-        ["aws", "configure", "export-credentials"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    cmd = ["aws", "configure", "export-credentials"]
+    if profile:
+        cmd.extend(["--profile", profile])
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     creds = json.loads(result.stdout)
     return creds.get("Expiration")
 
@@ -181,7 +185,7 @@ def format_duration(duration: timedelta) -> str:
     return " ".join(parts)
 
 
-def bedrock_export_command() -> str:
+def bedrock_export_command(profile=None) -> str:
     """Return a shell command that exports a fresh Bedrock bearer token."""
     try:
         from aws_bedrock_token_generator import provide_token
@@ -193,7 +197,7 @@ def bedrock_export_command() -> str:
         ) from exc
 
     requested_expiry = timedelta(hours=12)
-    expiration = aws_credential_expiration()
+    expiration = aws_credential_expiration(profile)
     if expiration:
         expires_at = parse_timestamp(expiration)
         remaining = expires_at - datetime.now(timezone.utc)
@@ -212,6 +216,143 @@ def bedrock_export_command() -> str:
 
     token = provide_token(expiry=requested_expiry)
     return f"export AWS_BEARER_TOKEN_BEDROCK={shlex.quote(token)}"
+
+
+def aws_export_region() -> str:
+    """Return the region to use for exported AWS credentials."""
+    return (
+        os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or "us-east-1"
+    )
+
+def _read_ini_text(text: str) -> RawConfigParser:
+    """Parse INI text into a config parser."""
+    parser = RawConfigParser()
+    if text.strip():
+        parser.read_string(text)
+    return parser
+
+
+def _write_ini_text(parser: RawConfigParser) -> str:
+    """Serialize a config parser back to INI text."""
+    stream = StringIO()
+    parser.write(stream)
+    return stream.getvalue()
+
+
+def upsert_aws_export_profile(config_text: str, region: str) -> str:
+    """Insert or replace the exported-credentials profile in AWS config text."""
+    parser = _read_ini_text(config_text)
+    section = f"profile {AWS_EXPORT_PROFILE}"
+    if not parser.has_section(section):
+        parser.add_section(section)
+    parser.set(section, "region", region)
+    return _write_ini_text(parser)
+
+
+def upsert_aws_credentials_profile(
+    credentials_text: str, exported_creds: dict[str, str]
+) -> str:
+    """Insert or replace the exported-credentials profile in AWS credentials."""
+    parser = _read_ini_text(credentials_text)
+    section = AWS_EXPORT_PROFILE
+    if not parser.has_section(section):
+        parser.add_section(section)
+    access_key = exported_creds.get("AccessKeyId")
+    secret_key = exported_creds.get("SecretAccessKey")
+    if not access_key or not secret_key:
+        raise RuntimeError("exported AWS credentials are missing required keys")
+    parser.set(section, "aws_access_key_id", access_key)
+    parser.set(section, "aws_secret_access_key", secret_key)
+    session_token = exported_creds.get("SessionToken")
+    if session_token:
+        parser.set(section, "aws_session_token", session_token)
+    elif parser.has_option(section, "aws_session_token"):
+        parser.remove_option(section, "aws_session_token")
+    return _write_ini_text(parser)
+
+
+def read_remote_text(remote_host: str, path: str) -> str:
+    """Return remote file contents, or an empty string when the file is missing."""
+    result = subprocess.run(
+        ["ssh", remote_host, f"if [ -f {path} ]; then cat {path}; fi"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
+def export_aws_credentials(profile=None) -> dict[str, str]:
+    """Run `aws configure export-credentials` and return the parsed JSON."""
+    cmd = ["aws", "configure", "export-credentials"]
+    if profile:
+        cmd.extend(["--profile", profile])
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+def write_exported_aws_profile_remote(remote, user=None, profile=None):
+    """Export AWS credentials and write the llm-export profile on the remote host."""
+    exported_creds = export_aws_credentials(profile)
+    remote_host = f"{user}@{remote}" if user else remote
+    remote_config = read_remote_text(remote_host, "~/.aws/config")
+    remote_credentials = read_remote_text(remote_host, "~/.aws/credentials")
+    aws_config = upsert_aws_export_profile(remote_config, region=aws_export_region())
+    aws_credentials = upsert_aws_credentials_profile(
+        remote_credentials, exported_creds
+    )
+    print(f"updating AWS export profile on {remote_host}:~/.aws/", file=sys.stderr)
+    subprocess.run(
+        ["ssh", remote_host, "mkdir -p ~/.aws && cat > ~/.aws/config"],
+        input=aws_config,
+        text=True,
+        check=True,
+    )
+    subprocess.run(
+        ["ssh", remote_host, "mkdir -p ~/.aws && cat > ~/.aws/credentials && chmod 600 ~/.aws/credentials"],
+        input=aws_credentials,
+        text=True,
+        check=True,
+    )
+
+
+def write_exported_aws_profile_locally(profile=None):
+    """Export AWS credentials and write the llm-export profile locally."""
+    exported_creds = export_aws_credentials(profile)
+
+    aws_dir = os.path.expanduser("~/.aws")
+    os.makedirs(aws_dir, exist_ok=True)
+    aws_config = os.path.join(aws_dir, "config")
+    try:
+        with open(aws_config) as f:
+            existing_config = f.read()
+    except FileNotFoundError:
+        existing_config = ""
+    updated_config = upsert_aws_export_profile(existing_config, aws_export_region())
+    with open(aws_config, "w") as f:
+        f.write(updated_config)
+    print(
+        f"updated AWS config with profile '{AWS_EXPORT_PROFILE}' in {aws_config}",
+        file=sys.stderr,
+    )
+    aws_credentials = os.path.join(aws_dir, "credentials")
+    try:
+        with open(aws_credentials) as f:
+            existing_credentials = f.read()
+    except FileNotFoundError:
+        existing_credentials = ""
+    updated_credentials = upsert_aws_credentials_profile(
+        existing_credentials, exported_creds
+    )
+    with open(aws_credentials, "w") as f:
+        f.write(updated_credentials)
+    os.chmod(aws_credentials, 0o600)
+    print(
+        f"updated AWS credentials with profile '{AWS_EXPORT_PROFILE}' in {aws_credentials}",
+        file=sys.stderr,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -247,6 +388,23 @@ def parse_args() -> argparse.Namespace:
         default=user,
         help="username for remote, defaults to %(default)s",
     )
+    ap.add_argument(
+        "--export-creds",
+        action="store_true",
+        help=(
+            "Export AWS credentials into ~/.aws/credentials under the "
+            f"'{AWS_EXPORT_PROFILE}' profile (pushed to --remote if given, "
+            "otherwise written locally). Re-run to refresh."
+        ),
+    )
+    ap.add_argument(
+        "--aws-profile",
+        metavar="PROFILE",
+        help=(
+            "AWS profile to use for SSO refresh, Bedrock token export, and "
+            "credential export"
+        ),
+    )
     args = ap.parse_args()
     if args.bedrock_export:
         args.kind = "bedrock"
@@ -271,14 +429,24 @@ def main() -> int:
                 print(f"    {path}")
         sys.exit(0)
 
+    if args.export_creds:
+        refresh_aws_sso(args.aws_profile)
+        if args.remote:
+            write_exported_aws_profile_remote(
+                remote=args.remote, user=args.user, profile=args.aws_profile
+            )
+        else:
+            write_exported_aws_profile_locally(profile=args.aws_profile)
+        return 0
+
     if args.kind in ("all", "claude", "pi"):
-        refresh_aws_sso()
+        refresh_aws_sso(args.aws_profile)
     if args.kind in ("all", "codex"):
         refresh_codex()
     if args.kind == "bedrock":
         try:
-            refresh_aws_sso()
-            print(bedrock_export_command())
+            refresh_aws_sso(args.aws_profile)
+            print(bedrock_export_command(args.aws_profile))
         except RuntimeError as e:
             print(str(e), file=sys.stderr)
             return 1

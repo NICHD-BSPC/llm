@@ -41,11 +41,13 @@ Or, to use on a remote machine:
 .. code-block:: bash
 
    # on local machine, refresh and push credentials to the
-   # right place on the remote
-   refresh.py --remote $REMOTE_HOST
+   # right place on the remote. For Bedrock on systems where
+   # direct SSO refresh inside the container is unreliable,
+   # export short-lived AWS credentials into ~/.aws instead:
+   refresh.py --remote $REMOTE_HOST --export-creds
 
    # then log in to the remote host and run:
-   launch.py codex
+   launch.py claude   # or pi
 
 **See** https://nichd-bspc.github.io/llm **for documentation.**
 

@@ -69,6 +69,8 @@ Refreshes credentials locally, and optionally copies them to a remote host.
 - Optionally pushes refreshed credentials to a remote host (such as NIH's Biowulf).
 - Optionally pushes entire config directories to remote.
 - Optionally prints Bedrock bearer-token exports for tools that do not use the AWS SDK.
+- Optionally exports short-lived AWS session credentials to
+  :file:`~/.aws/credentials` under a dedicated AWS profile, ``llm-export``.
 
 Examples
 ~~~~~~~~
@@ -90,6 +92,14 @@ Refresh all, push credentials **as well as entire agent config dirs** to remote 
 .. code-block:: bash
 
    refresh.py --full --remote biowulf.nih.gov
+
+Export short-lived AWS credentials and push them to a remote system. This is
+useful when the remote tool should use already-exported credentials instead of
+trying to refresh SSO itself:
+
+.. code-block:: bash
+
+   refresh.py --export-creds --remote biowulf.nih.gov
 
 See what files will be pushed with ``--full``:
 
@@ -137,6 +147,13 @@ When Amazon Bedrock is enabled for the effective container environment,
 - ``claude``: when ``CLAUDE_CODE_USE_BEDROCK=1``
 - ``pi``: when ``PI_USE_BEDROCK=1``
 - ``shell``: when ``CLAUDE_CODE_USE_BEDROCK=1`` or ``PI_USE_BEDROCK=1``
+
+If :file:`~/.aws/credentials` contains the ``llm-export`` profile,
+``launch.py`` automatically uses it for Bedrock unless ``AWS_PROFILE`` is
+already set.
+
+If host proxy variables are set, :file:`launch.py` passes them through to the
+container.
 
 See :doc:`config-files` for what those files and directories contain.
 
@@ -308,8 +325,11 @@ default in the container:
 - For ``claude`` and ``shell``: All host environment variables starting with ``CLAUDE_CODE`` or ``ANTHROPIC_``
 - For ``pi`` and ``shell``: All host environment variables starting with ``PI_``
 - For ``claude``, ``pi``, and ``shell``: When Bedrock is enabled (via
-  ``CLAUDE_CODE_USE_BEDROCK=1`` or ``PI_USE_BEDROCK=1``): All host environment
-  variables starting with ``AWS_``
+  ``CLAUDE_CODE_USE_BEDROCK=1`` or ``PI_USE_BEDROCK=1``): Host environment
+  variables starting with ``AWS_``. If ``AWS_PROFILE`` is set or the automatic
+  ``llm-export`` profile is in use, launcher omits host session-key variables
+  such as ``AWS_ACCESS_KEY_ID`` and ``AWS_SESSION_TOKEN`` so the mounted
+  :file:`~/.aws/credentials` profile remains authoritative.
 
 **Certificate variables (when** ``--certs`` **is provided):**
 

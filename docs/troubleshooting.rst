@@ -143,11 +143,16 @@ or ``The SSO session ... has expired``.
       refresh.py --remote biowulf.nih.gov
 
 3. You do **not** need to restart the container. Because credential files are
-   mounted into the container, the running agent will pick up refreshed
+   mounted into the container, the running agent can see refreshed
    credentials on the next request.
 
 4. If it has been a long time since credentials expired, the agent may have
    given up retrying. Re-send your last prompt.
+
+5. If Pi still keeps using the expired credentials, stop and restart ``pi``.
+   Some SDK/provider paths cache resolved credentials in-process, so updating
+   :file:`~/.aws/credentials` alone may not always be enough for an already
+   running Pi session.
 
 **Codex login failures:**
 
@@ -229,12 +234,24 @@ do not appear on the remote:
 
      refresh.py --full --remote biowulf.nih.gov
 
+- If the remote system should use exported short-lived AWS credentials instead
+  of trying to refresh SSO itself, push those explicitly:
+
+  .. code-block:: bash
+
+     refresh.py --export-creds --remote biowulf.nih.gov
+
 **Environment variables not set on remote:**
 
 Environment variables exported in your *local* :file:`~/.bashrc` are not
 available on the remote host. You must also add the relevant exports
-(``CLAUDE_CODE_USE_BEDROCK``, ``AWS_PROFILE``, ``AWS_REGION``, model
-defaults, etc.) to the **remote** :file:`~/.bashrc`.
+(``CLAUDE_CODE_USE_BEDROCK``, ``AWS_REGION``, model defaults, etc.) to the
+**remote** :file:`~/.bashrc`.
+
+If you use :cmd:`refresh.py --export-creds --remote HOST`, :file:`launch.py`
+will automatically use the dedicated ``llm-export`` AWS profile when it is
+present in :file:`~/.aws/credentials`, so explicitly setting ``AWS_PROFILE`` on
+the remote is optional in that setup.
 
 If you use :cmd:`sinteractive` on Biowulf, note that the interactive node
 inherits the login node's environment, so exporting in :file:`~/.bashrc` on
@@ -408,4 +425,3 @@ Codex-specific issues
   This is usually due to setting certificates with ``--certs`` or
   ``$LLM_DEVCONTAINER_CERTS`` when they are not needed. Omit ``--certs`` and
   unset ``LLM_DEVCONTAINER_CERTS``.
-

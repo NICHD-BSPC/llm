@@ -98,7 +98,10 @@ order to be able to use `codex login`.
    - The default podman image was downloaded if needed, a container was created
    - The :file:`~/.claude.json` file and any existing :file:`~/.claude` directory was mounted into the container
    - Host variables starting with ``CLAUDE_CODE`` were passed through to the container
-   - Because ``CLAUDE_CODE_USE_BEDROCK=1`` was set, host ``AWS_*`` variables and the :file:`~/.aws` directory were also passed through so Claude could use AWS credentials
+   - Because ``CLAUDE_CODE_USE_BEDROCK=1`` was set, :file:`~/.aws` and relevant
+     host ``AWS_*`` settings were also passed through so Claude could use AWS
+     credentials. If ``AWS_PROFILE`` is used, launcher avoids passing host
+     session-key variables that would override the mounted profile.
 
 Step 4. Claude Code remote (Singularity)
 ----------------------------------------
@@ -107,7 +110,7 @@ Step 4. Claude Code remote (Singularity)
 
    .. code-block:: bash
 
-      refresh.py --remote biowulf.nih.gov
+      refresh.py --remote biowulf.nih.gov --export-creds
 
 2. Log in to the remote system. If Using NIH's Biowulf, get an interactive node and load the Singularity module:
 
@@ -128,14 +131,18 @@ Step 4. Claude Code remote (Singularity)
 
 .. details:: What did this do?
 
-   - :file:`refresh.py` ran :cmd:`aws sso login` if needed, and then pushed the
-     appropriate credentials files (:file:`~/.aws`) to the remote.
+   - :file:`refresh.py` ran :cmd:`aws sso login` if needed, then exported the
+     current short-lived AWS session credentials into the remote
+     :file:`~/.aws/credentials` file under the dedicated ``llm-export`` profile
+     and ensured the remote AWS config had the matching region entry.
    - :file:`launch.py` detected that you're running on Linux so Singularity is the appropriate container runtime
    - The default Singularity image was downloaded
    - Similar to running locally in a Podman container, the appropriate configs
      were mounted into the running Singularity container. With
-     ``CLAUDE_CODE_USE_BEDROCK=1``, that includes host ``AWS_*`` variables and
-     :file:`~/.aws`.
+     ``CLAUDE_CODE_USE_BEDROCK=1``, that includes :file:`~/.aws`; if no
+     ``AWS_PROFILE`` is set on the remote host, :file:`launch.py` will
+     automatically use the ``llm-export`` profile when it is present in
+     :file:`~/.aws/credentials`.
 
 Step 5. Configure Claude Code
 -----------------------------
