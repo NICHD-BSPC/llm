@@ -5,7 +5,7 @@ ARG USERNAME=devuser
 ARG USER_UID=1000
 ARG USER_GID=1000
 ARG DEBIAN_FRONTEND=noninteractive
-ARG NODE_VERSION=22.22.2
+ARG NODE_VERSION=25.9.0
 ARG CLAUDE_VERSION=
 ARG CODEX_VERSION=
 ARG PI_VERSION=
@@ -29,6 +29,7 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
       curl \
       fzf \
       git \
+      libatomic1 \
       jq \
       less \
       locales \
