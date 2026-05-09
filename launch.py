@@ -28,6 +28,16 @@ import tempfile
 from pathlib import Path, PurePosixPath
 
 
+AWS_EXPORT_PROFILE = "llm-export"
+AWS_CREDENTIALS_JSON = Path.home() / ".aws" / "credentials.json"
+AWS_STATIC_CREDENTIAL_ENV_VARS = {
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_SECURITY_TOKEN",
+    "AWS_CREDENTIAL_EXPIRATION",
+}
+
 # Hard-coded credential and config paths.
 CREDENTIAL_PATHS = {
     "codex": ("~/.codex",),  # ~/.codex/auth.json has credentials
@@ -36,7 +46,7 @@ CREDENTIAL_PATHS = {
         "~/.claude.json",
     ),
     "pi": ("~/.pi",),
-    "aws": ("~/.aws",),  # ~/.aws/sso and ~/.aws/config have credentials
+    "aws": ("~/.aws",),
 }
 
 # Unique config for each subcommand
@@ -303,10 +313,10 @@ class Launcher:
 
         # If mounting a conda env, needs to exist and have a bin dir.
         # A value without "/" is treated as a named env and resolved via conda.
-        if args.conda_env:
+        if args.conda_env is not None:
             if "/" not in args.conda_env:
                 args.conda_env = self._resolve_named_conda_env(args.conda_env)
-            conda_path = Path(args.conda_env).expanduser().resolve()
+            conda_path = Path(str(args.conda_env)).expanduser().resolve()
             if (
                 not conda_path.exists()
                 or not conda_path.is_dir()
@@ -402,6 +412,7 @@ class Launcher:
                 "is not in PATH."
             )
         try:
+            conda = str(conda)
             result = subprocess.run(
                 [conda, "env", "list", "--json"],
                 capture_output=True,
@@ -528,6 +539,37 @@ class Launcher:
             key: value for key, value in os.environ.items() if key.startswith(prefixes)
         }
 
+    def _has_static_aws_credentials(self, env):
+        """Return True when the env contains direct AWS access key credentials."""
+        return bool(env.get("AWS_ACCESS_KEY_ID") and env.get("AWS_SECRET_ACCESS_KEY"))
+
+    def _proxy_env_vars(self):
+        """Resolve proxy env vars from the host environment.
+
+        These can be set as uppercase or lowercase versions.
+
+        For each protocol (http, https), if only one case variant is set on the
+        host, use its value for both variants inside the container.  If both are
+        set, pass them through as-is.
+        """
+        env = {}
+
+        https_lower = os.environ.get("https_proxy")
+        https_upper = os.environ.get("HTTPS_PROXY")
+        if https_lower or https_upper:
+            value = https_lower or https_upper
+            env["https_proxy"] = https_lower if https_lower else value
+            env["HTTPS_PROXY"] = https_upper if https_upper else value
+
+        http_lower = os.environ.get("http_proxy")
+        http_upper = os.environ.get("HTTP_PROXY")
+        if http_lower or http_upper:
+            value = http_lower or http_upper
+            env["http_proxy"] = http_lower if http_lower else value
+            env["HTTP_PROXY"] = http_upper if http_upper else value
+
+        return env
+
     def _bedrock_enabled(self, env):
         """Return True when the effective env enables Amazon Bedrock."""
         if self.args.cmd == "pi":
@@ -541,9 +583,19 @@ class Launcher:
             )
         return False
 
+    def _has_exported_aws_profile(self):
+        """Return True when ~/.aws/credentials.json exists."""
+        return AWS_CREDENTIALS_JSON.is_file()
+
     def _validate_bedrock_env(self, env):
         """Validate Bedrock-related environment requirements once."""
-        if self._bedrock_enabled(env) and not env.get("AWS_PROFILE"):
+        has_exported_creds = self._has_exported_aws_profile()
+        if (
+            self._bedrock_enabled(env)
+            and not env.get("AWS_PROFILE")
+            and not self._has_static_aws_credentials(env)
+            and not has_exported_creds
+        ):
             if self.args.cmd == "pi":
                 required_flag = "PI_USE_BEDROCK=1"
             elif self.args.cmd == "shell":
@@ -553,7 +605,8 @@ class Launcher:
             fatal(
                 f"AWS_PROFILE must be set for {self.args.cmd} when "
                 f"{required_flag}. Inherit it from the host or pass "
-                "--env AWS_PROFILE=..."
+                "--env AWS_PROFILE=..., or create the llm-export profile with "
+                "refresh.py."
             )
 
     def build_env_vars(self):
@@ -577,13 +630,24 @@ class Launcher:
         if self.args.cmd in {"pi", "shell"}:
             env.update(self._host_env_with_prefixes("PI_"))
 
+        # Pass through proxy env vars
+        env.update(self._proxy_env_vars())
+
         # Args on the command line win over launcher defaults and inherited
         # tool-specific host env.
         env.update(user_env)
 
         if self._bedrock_enabled(env):
+            has_exported_profile = self._has_exported_aws_profile()
+            suppress_static_aws_creds = (
+                bool(env.get("AWS_PROFILE")) or has_exported_profile
+            )
             for key, value in self._host_env_with_prefixes("AWS_").items():
+                if suppress_static_aws_creds and key in AWS_STATIC_CREDENTIAL_ENV_VARS:
+                    continue
                 env.setdefault(key, value)
+            if "AWS_PROFILE" not in env and has_exported_profile:
+                env["AWS_PROFILE"] = AWS_EXPORT_PROFILE
 
         if args.certs:
             for var_name in CERT_FILE_ENV_VARS:

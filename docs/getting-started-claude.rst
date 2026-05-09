@@ -98,7 +98,10 @@ order to be able to use `codex login`.
    - The default podman image was downloaded if needed, a container was created
    - The :file:`~/.claude.json` file and any existing :file:`~/.claude` directory was mounted into the container
    - Host variables starting with ``CLAUDE_CODE`` were passed through to the container
-   - Because ``CLAUDE_CODE_USE_BEDROCK=1`` was set, host ``AWS_*`` variables and the :file:`~/.aws` directory were also passed through so Claude could use AWS credentials
+   - Because ``CLAUDE_CODE_USE_BEDROCK=1`` was set, :file:`~/.aws` and relevant
+     host ``AWS_*`` settings were also passed through so Claude could use AWS
+     credentials. If ``AWS_PROFILE`` is used, launcher avoids passing host
+     session-key variables that would override the mounted profile.
 
 Step 4. Claude Code remote (Singularity)
 ----------------------------------------
@@ -128,14 +131,19 @@ Step 4. Claude Code remote (Singularity)
 
 .. details:: What did this do?
 
-   - :file:`refresh.py` ran :cmd:`aws sso login` if needed, and then pushed the
-     appropriate credentials files (:file:`~/.aws`) to the remote.
+   - :file:`refresh.py` ran :cmd:`aws sso login` if needed, then exported the
+     current short-lived AWS session credentials to
+     :file:`~/.aws/credentials.json` on the remote and configured the
+     ``llm-export`` profile in :file:`~/.aws/config` to read them via
+     ``credential_process``.
    - :file:`launch.py` detected that you're running on Linux so Singularity is the appropriate container runtime
    - The default Singularity image was downloaded
    - Similar to running locally in a Podman container, the appropriate configs
      were mounted into the running Singularity container. With
-     ``CLAUDE_CODE_USE_BEDROCK=1``, that includes host ``AWS_*`` variables and
-     :file:`~/.aws`.
+     ``CLAUDE_CODE_USE_BEDROCK=1``, that includes :file:`~/.aws`; if no
+     ``AWS_PROFILE`` is set on the remote host, :file:`launch.py` will
+     automatically use the ``llm-export`` profile when
+     :file:`~/.aws/credentials.json` is present.
 
 Step 5. Configure Claude Code
 -----------------------------

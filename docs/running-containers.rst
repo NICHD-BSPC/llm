@@ -211,7 +211,7 @@ You must refresh credentials *outside the container* (see
 do this. See :ref:`ts-credentials-expired` for troubleshooting expired or
 missing credentials. For example, Claude Code running in a container may not be able to
 connect due to credentials expiring, but as soon as you use :ref:`refresh` and
-the credentials on the host are updated, Claude Code will immediately see them
+the credentials on the host are updated, Claude Code can see them
 since they are mounted into the container. While Claude Code does retry
 attempts, if it has been a while between old credentials expiring and new ones
 being available then you might need to re-send your latest prompt.
@@ -405,4 +405,3 @@ env.
    launch.py \
      --conda-env /Volumes/devel/proj-env \
      codex exec "what version of pandas do I have installed, and what directory is it in?"
-

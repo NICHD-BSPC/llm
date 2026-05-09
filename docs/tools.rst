@@ -65,7 +65,9 @@ variable):
 Refreshes credentials locally, and optionally copies them to a remote host.
 
 - Refreshes Codex authentication (:file:`~/.codex/auth.json`). This is mounted inside running Codex containers, so they will see the new credentials when refreshed.
-- Refreshes AWS SSO credentials (:file:`~/aws/sso`). This is mounted inside running Claude and Pi containers, so they will see the new credentials when refreshed.
+- Refreshes AWS SSO credentials and exports them as JSON to
+  :file:`~/.aws/credentials.json`. This is used by the ``llm-export`` profile
+  via ``credential_process``.
 - Optionally pushes refreshed credentials to a remote host (such as NIH's Biowulf).
 - Optionally pushes entire config directories to remote.
 - Optionally prints Bedrock bearer-token exports for tools that do not use the AWS SDK.
@@ -90,6 +92,14 @@ Refresh all, push credentials **as well as entire agent config dirs** to remote 
 .. code-block:: bash
 
    refresh.py --full --remote biowulf.nih.gov
+
+Refresh all and push credentials to a remote system. This exports AWS session
+credentials as :file:`~/.aws/credentials.json` and configures the
+``llm-export`` profile on the remote:
+
+.. code-block:: bash
+
+   refresh.py --remote biowulf.nih.gov
 
 See what files will be pushed with ``--full``:
 
@@ -137,6 +147,12 @@ When Amazon Bedrock is enabled for the effective container environment,
 - ``claude``: when ``CLAUDE_CODE_USE_BEDROCK=1``
 - ``pi``: when ``PI_USE_BEDROCK=1``
 - ``shell``: when ``CLAUDE_CODE_USE_BEDROCK=1`` or ``PI_USE_BEDROCK=1``
+
+If :file:`~/.aws/credentials.json` exists, ``launch.py`` automatically uses
+the ``llm-export`` profile for Bedrock unless ``AWS_PROFILE`` is already set.
+
+If host proxy variables are set, :file:`launch.py` passes them through to the
+container.
 
 See :doc:`config-files` for what those files and directories contain.
 
@@ -308,8 +324,11 @@ default in the container:
 - For ``claude`` and ``shell``: All host environment variables starting with ``CLAUDE_CODE`` or ``ANTHROPIC_``
 - For ``pi`` and ``shell``: All host environment variables starting with ``PI_``
 - For ``claude``, ``pi``, and ``shell``: When Bedrock is enabled (via
-  ``CLAUDE_CODE_USE_BEDROCK=1`` or ``PI_USE_BEDROCK=1``): All host environment
-  variables starting with ``AWS_``
+  ``CLAUDE_CODE_USE_BEDROCK=1`` or ``PI_USE_BEDROCK=1``): Host environment
+  variables starting with ``AWS_``. If ``AWS_PROFILE`` is set or the automatic
+  ``llm-export`` profile is in use, launcher omits host session-key variables
+  such as ``AWS_ACCESS_KEY_ID`` and ``AWS_SESSION_TOKEN`` so the
+  ``credential_process`` in :file:`~/.aws/config` remains authoritative.
 
 **Certificate variables (when** ``--certs`` **is provided):**
 
