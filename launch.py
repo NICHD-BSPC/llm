@@ -46,7 +46,7 @@ CREDENTIAL_PATHS = {
         "~/.claude.json",
     ),
     "pi": ("~/.pi",),
-    "aws": ("~/.aws",),  # ~/.aws/sso and ~/.aws/config have credentials
+    "aws": ("~/.aws",),
 }
 
 # Unique config for each subcommand
@@ -313,10 +313,10 @@ class Launcher:
 
         # If mounting a conda env, needs to exist and have a bin dir.
         # A value without "/" is treated as a named env and resolved via conda.
-        if args.conda_env:
+        if args.conda_env is not None:
             if "/" not in args.conda_env:
                 args.conda_env = self._resolve_named_conda_env(args.conda_env)
-            conda_path = Path(args.conda_env).expanduser().resolve()
+            conda_path = Path(str(args.conda_env)).expanduser().resolve()
             if (
                 not conda_path.exists()
                 or not conda_path.is_dir()
@@ -412,6 +412,7 @@ class Launcher:
                 "is not in PATH."
             )
         try:
+            conda = str(conda)
             result = subprocess.run(
                 [conda, "env", "list", "--json"],
                 capture_output=True,
@@ -638,7 +639,9 @@ class Launcher:
 
         if self._bedrock_enabled(env):
             has_exported_profile = self._has_exported_aws_profile()
-            suppress_static_aws_creds = bool(env.get("AWS_PROFILE")) or has_exported_profile
+            suppress_static_aws_creds = (
+                bool(env.get("AWS_PROFILE")) or has_exported_profile
+            )
             for key, value in self._host_env_with_prefixes("AWS_").items():
                 if suppress_static_aws_creds and key in AWS_STATIC_CREDENTIAL_ENV_VARS:
                     continue
