@@ -6,11 +6,23 @@ from datetime import datetime, timedelta, timezone
 import json
 import getpass
 from io import StringIO
+import logging
 import os
 import subprocess
 import sys
 from typing import Optional
 
+LOGGER = logging.getLogger("refresh")
+
+
+def configure_logging(verbose=False):
+    """Configure CLI logging."""
+    LOGGER.handlers.clear()
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    LOGGER.addHandler(handler)
+    LOGGER.setLevel(logging.DEBUG if verbose else logging.INFO)
+    LOGGER.propagate = False
 AWS_EXPORT_PROFILE = "llm-export"
 
 CREDENTIAL_PATHS = {
@@ -83,13 +95,13 @@ def rsync_paths(paths, user, remote):
         relative_paths.append(home_relative_path(path))
 
     for path in skipped_paths:
-        print(f"skipping missing path: {path}", file=sys.stderr)
+        LOGGER.warning("skipping missing path: %s", path)
 
     if not relative_paths:
-        print("no existing paths to rsync", file=sys.stderr)
+        LOGGER.warning("no existing paths to rsync")
         return
 
-    print(f"rsyncing these paths to {remote_host}:~/...\n\n ", "\n  ".join(paths))
+    LOGGER.info("rsyncing these paths to %s:~/...\n\n  %s", remote_host, "\n  ".join(paths))
 
     subprocess.run(
         [
@@ -109,19 +121,16 @@ def refresh_aws_sso(profile=None):
     try:
         expiration = aws_credential_expiration(profile)
         if expiration:
-            print(f"AWS SSO credentials expire at: {expiration}", file=sys.stderr)
+            LOGGER.info("AWS SSO credentials expire at: %s", expiration)
         else:
-            print("AWS SSO credentials have no expiration set.", file=sys.stderr)
+            LOGGER.info("AWS SSO credentials have no expiration set.")
     except (
         subprocess.CalledProcessError,
         json.JSONDecodeError,
         KeyError,
         ValueError,
     ) as e:
-        print(
-            f"AWS credential check failed ({e}), running aws sso login...",
-            file=sys.stderr,
-        )
+        LOGGER.warning("AWS credential check failed (%s), running aws sso login...", e)
         try:
             cmd = ["aws", "sso", "login"]
             if profile:
@@ -143,12 +152,9 @@ def refresh_codex():
     )
     output = result.stdout.strip() or result.stderr.strip()
     if output == "Logged in using ChatGPT":
-        print("Codex: already logged in.", file=sys.stderr)
+        LOGGER.info("Codex: already logged in.")
     else:
-        print(
-            f"Codex: not logged in ({output!r}), running codex login...",
-            file=sys.stderr,
-        )
+        LOGGER.warning("Codex: not logged in (%r), running codex login...", output)
         subprocess.run(["codex", "login"], check=True)
 
 
@@ -202,16 +208,15 @@ def bedrock_export_command(profile=None) -> str:
         expires_at = parse_timestamp(expiration)
         remaining = expires_at - datetime.now(timezone.utc)
         effective = min(requested_expiry, max(remaining, timedelta()))
-        print(
-            "Bedrock token request: 12h; "
-            f"AWS credentials expire at {expiration}; "
-            f"max possible token duration: {format_duration(effective)}",
-            file=sys.stderr,
+        LOGGER.info(
+            "Bedrock token request: 12h; AWS credentials expire at %s; "
+            "max possible token duration: %s",
+            expiration,
+            format_duration(effective),
         )
     else:
-        print(
-            "Bedrock token request: 12h; AWS credentials have no reported expiration.",
-            file=sys.stderr,
+        LOGGER.info(
+            "Bedrock token request: 12h; AWS credentials have no reported expiration."
         )
 
     token = provide_token(expiry=requested_expiry)
@@ -448,7 +453,7 @@ def main() -> int:
             refresh_aws_sso(args.aws_profile)
             print(bedrock_export_command(args.aws_profile))
         except RuntimeError as e:
-            print(str(e), file=sys.stderr)
+            LOGGER.error("%s", e)
             return 1
         return 0
 
@@ -460,7 +465,7 @@ def main() -> int:
     if args.remote:
         rsync_paths(paths=paths, user=args.user, remote=args.remote)
     else:
-        print("No --remote specified; skipping push.")
+        LOGGER.info("No --remote specified; skipping push.")
 
     return 0
 
