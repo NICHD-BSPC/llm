@@ -29,7 +29,7 @@ from pathlib import Path, PurePosixPath
 
 
 AWS_EXPORT_PROFILE = "llm-export"
-AWS_CREDENTIALS_FILE = Path.home() / ".aws" / "credentials"
+AWS_CREDENTIALS_JSON = Path.home() / ".aws" / "credentials.json"
 AWS_STATIC_CREDENTIAL_ENV_VARS = {
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
@@ -583,12 +583,8 @@ class Launcher:
         return False
 
     def _has_exported_aws_profile(self):
-        """Return True when ~/.aws/credentials contains the exported profile."""
-        try:
-            credentials_text = AWS_CREDENTIALS_FILE.read_text()
-        except FileNotFoundError:
-            return False
-        return f"[{AWS_EXPORT_PROFILE}]" in credentials_text
+        """Return True when ~/.aws/credentials.json exists."""
+        return AWS_CREDENTIALS_JSON.is_file()
 
     def _validate_bedrock_env(self, env):
         """Validate Bedrock-related environment requirements once."""
@@ -609,7 +605,7 @@ class Launcher:
                 f"AWS_PROFILE must be set for {self.args.cmd} when "
                 f"{required_flag}. Inherit it from the host or pass "
                 "--env AWS_PROFILE=..., or create the llm-export profile with "
-                "refresh.py --export-creds."
+                "refresh.py."
             )
 
     def build_env_vars(self):
