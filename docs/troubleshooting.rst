@@ -51,9 +51,9 @@ and source it or open a new terminal.
    # Codex
    ls ~/.codex/auth.json
 
-   # Claude / Pi (AWS SSO)
+   # Claude / Pi (AWS)
    ls ~/.aws/config
-   ls ~/.aws/sso/cache/
+   ls ~/.aws/credentials.json
 
    # Claude Code config
    ls ~/.claude.json
@@ -151,7 +151,7 @@ or ``The SSO session ... has expired``.
 
 5. If Pi still keeps using the expired credentials, stop and restart ``pi``.
    Some SDK/provider paths cache resolved credentials in-process, so updating
-   :file:`~/.aws/credentials` alone may not always be enough for an already
+   :file:`~/.aws/credentials.json` alone may not always be enough for an already
    running Pi session.
 
 **Codex login failures:**
@@ -239,7 +239,7 @@ do not appear on the remote:
 
   .. code-block:: bash
 
-     refresh.py --export-creds --remote biowulf.nih.gov
+     refresh.py --remote biowulf.nih.gov
 
 **Environment variables not set on remote:**
 
@@ -248,10 +248,9 @@ available on the remote host. You must also add the relevant exports
 (``CLAUDE_CODE_USE_BEDROCK``, ``AWS_REGION``, model defaults, etc.) to the
 **remote** :file:`~/.bashrc`.
 
-If you use :cmd:`refresh.py --export-creds --remote HOST`, :file:`launch.py`
-will automatically use the dedicated ``llm-export`` AWS profile when it is
-present in :file:`~/.aws/credentials`, so explicitly setting ``AWS_PROFILE`` on
-the remote is optional in that setup.
+When :file:`~/.aws/credentials.json` is present on the remote,
+:file:`launch.py` will automatically use the ``llm-export`` AWS profile, so
+explicitly setting ``AWS_PROFILE`` on the remote is optional.
 
 If you use :cmd:`sinteractive` on Biowulf, note that the interactive node
 inherits the login node's environment, so exporting in :file:`~/.bashrc` on

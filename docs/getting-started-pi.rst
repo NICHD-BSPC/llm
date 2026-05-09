@@ -27,7 +27,7 @@ session credentials:
 .. code-block:: bash
 
    # local machine
-   refresh.py --export-creds --remote your.remote.host
+   refresh.py --remote your.remote.host
 
    # remote shell
    launch.py pi
