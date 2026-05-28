@@ -424,3 +424,11 @@ Codex-specific issues
   This is usually due to setting certificates with ``--certs`` or
   ``$LLM_DEVCONTAINER_CERTS`` when they are not needed. Omit ``--certs`` and
   unset ``LLM_DEVCONTAINER_CERTS``.
+
+- **Refresh token was already used:**
+
+  ``Error loading configuration: Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.``
+
+  It is unclear exactly why this happens, but the solution is to run
+  :cmd:`codex logout` locally, and then re-run :ref:`refresh` (using
+  ``--remote`` if needed). This forces a refresh of the token.
