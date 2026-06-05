@@ -7,6 +7,8 @@ env:
   SINGULARITY_SIF_PATH: llm.sif
 
 on:
+  schedule:
+    - cron: '2 2 * * *'
   push:
     branches:
       - main
