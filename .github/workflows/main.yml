@@ -173,11 +173,22 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           repo_lc="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
-          image_base="oras://${{ env.REGISTRY }}/${repo_lc}-sif"
+          registry_base="${{ env.REGISTRY }}/${repo_lc}-sif"
           sha_tag="sha-${GITHUB_SHA}"
 
-          apptainer push --allow-unsigned "./${SINGULARITY_SIF_PATH}" "${image_base}:${sha_tag}"
+          # Upload the SIF once under the sha tag.
+          apptainer push --allow-unsigned "./${SINGULARITY_SIF_PATH}" \
+            "oras://${registry_base}:${sha_tag}"
+
+          # Retag, which happens server-side. This reuses podman login from above
+          for tag in "claude-${CLAUDE_VERSION}" "codex-${CODEX_VERSION}" "pi-${PI_VERSION}"; do
+            skopeo copy --all \
+              "docker://${registry_base}:${sha_tag}" \
+              "docker://${registry_base}:${tag}"
+          done
 
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            apptainer push --allow-unsigned "./${SINGULARITY_SIF_PATH}" "${image_base}:latest"
+            skopeo copy --all \
+              "docker://${registry_base}:${sha_tag}" \
+              "docker://${registry_base}:latest"
           fi
