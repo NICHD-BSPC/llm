@@ -122,8 +122,15 @@ support AWS SSO:
 Runs the agent inside a container, assuming credentials are already available.
 
 - Detects Podman vs Singularity, or accepts an explicit backend
-- Defaults to automatically pulling the latest containers published by this
-  repo, from GitHub Container Registry (https://ghcr.io/nichd-bspc/llm)
+- Defaults to automatically pulling the latest container for the launched
+  harness, published by this repo to GitHub Container Registry
+  (https://ghcr.io/nichd-bspc/llm). Each harness has its own ``latest`` tag
+  (``codex-latest``, ``claude-latest``, ``pi-latest``) that only moves when
+  that harness changes version, so you don't pull a fresh image every day when
+  the harness is unchanged. The ``shell`` subcommand uses the overall
+  ``latest`` tag. Use ``--tag`` to pick a different tag (e.g. ``--tag latest``
+  for the latest overall image, or ``--tag codex-0.125.0`` to pin a version),
+  or ``--image-name`` / ``--sif-path`` for full control.
 - By default, mounts the current working directory and only the
   credential/config paths relevant to the called tool
 - Starts :cmd:`codex`, :cmd:`claude`, :cmd:`pi`, or an interactive shell
@@ -299,6 +306,16 @@ When developing locally or using other containers, specify the image name
 
    # or on Linux host, defaults to Singularity:
    launch.py --sif-name llm.sif codex
+
+To stay on the published images but choose a different tag, use ``--tag``:
+
+.. code-block:: bash
+
+   # use the latest overall image instead of the per-harness latest
+   launch.py --tag latest codex
+
+   # pin a specific harness version
+   launch.py --tag codex-0.125.0 codex
 
 
 

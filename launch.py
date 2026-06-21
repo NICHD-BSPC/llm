@@ -85,6 +85,18 @@ CERT_FILE_ENV_VARS = (
 
 DEFAULT_PODMAN_IMAGE = "ghcr.io/nichd-bspc/llm"
 DEFAULT_SINGULARITY_IMAGE = "oras://ghcr.io/nichd-bspc/llm-sif"
+
+# Per-harness "latest" tags. Images are rebuilt daily, but these tags only move
+# when the harness's own version changes, so launching a given harness does not
+# pull a fresh image every day when that harness's version is unchanged. The
+# "shell" subcommand has no single harness, so it falls back to the overall
+# "latest" tag. Override with --tag to pin a specific tag (e.g. --tag latest).
+DEFAULT_IMAGE_TAGS = {
+    "shell": "latest",
+    "codex": "codex-latest",
+    "claude": "claude-latest",
+    "pi": "pi-latest",
+}
 DEFAULT_CERTS_ENV_VAR = "LLM_DEVCONTAINER_CERTS"
 DEFAULT_MOUNTS_ENV_VAR = "LLM_DEVCONTAINER_MOUNTS"
 LOGGER = logging.getLogger("launch")
@@ -105,6 +117,39 @@ def fatal(message):
     """Log an error message and exit."""
     LOGGER.error(message)
     raise SystemExit(1)
+
+
+def split_image_tag(reference):
+    """Split an image reference into (name, tag), where tag is None if absent.
+
+    Only a ':' in the final path segment counts as a tag separator, so registry
+    ports (localhost:5000/foo) and URI schemes (oras://...) are not mistaken
+    for tags.
+    """
+    last_segment = reference.rpartition("/")[2]
+    if ":" in last_segment:
+        name, _, tag = reference.rpartition(":")
+        return name, tag
+    return reference, None
+
+
+def resolve_image_reference(reference, explicit_tag, cmd, default_base):
+    """Apply the effective tag to a registry image reference.
+
+    Precedence:
+      1. an explicit --tag always wins;
+      2. otherwise, only our own default image base gets the per-harness
+         default tag (e.g. codex-latest);
+      3. any other (custom) reference is left untouched, so a tag baked into it
+         is respected and an untagged custom image lets the runtime default to
+         ``:latest`` as before.
+    """
+    name, _ = split_image_tag(reference)
+    if explicit_tag:
+        return f"{name}:{explicit_tag}"
+    if reference == default_base:
+        return f"{name}:{DEFAULT_IMAGE_TAGS[cmd]}"
+    return reference
 
 
 class Backend:
@@ -168,7 +213,7 @@ class PodmanBackend(Backend):
         if result.returncode == 0:
             return
 
-        if self.args.image_name != DEFAULT_PODMAN_IMAGE:
+        if not self.args.image_name.startswith(DEFAULT_PODMAN_IMAGE + ":"):
             fatal(
                 f"podman image '{self.args.image_name}' not found. "
                 "Build it first or specify a different image with --image-name."
@@ -861,6 +906,18 @@ def build_parser():
         help="Container image name for podman (default: %(default)s, needs to match name given to build.py)",
     )
     parser.add_argument(
+        "--tag",
+        default=None,
+        help=(
+            "Image tag to use for the default registry images. By default each "
+            "harness uses its own latest tag (e.g. 'codex-latest'), which only "
+            "moves when that harness's version changes. Pass e.g. '--tag latest' "
+            "to use the latest overall image, or a pinned tag like "
+            "'codex-0.125.0'. Ignored for custom local --image-name/--sif-path "
+            "values that already include a tag."
+        ),
+    )
+    parser.add_argument(
         "--arch",
         default="linux/amd64",
         help="Container platform for podman (default: %(default)s, needs to match arch given to build.py)",
@@ -956,6 +1013,19 @@ def parse_args(argv):
     # An optional separator can make the launcher/tool argument boundary clear.
     if args.tool_args[:1] == ["--"]:
         args.tool_args = args.tool_args[1:]
+
+    # Resolve the effective image tag. Our own default registry images get a
+    # per-harness "latest" tag (or whatever --tag specifies); custom images are
+    # left as-is unless --tag is given. The singularity reference is only
+    # treated as a registry image when it uses the oras:// scheme; a local .sif
+    # path is never rewritten.
+    args.image_name = resolve_image_reference(
+        args.image_name, args.tag, args.cmd, DEFAULT_PODMAN_IMAGE
+    )
+    if args.sif_path.startswith("oras://"):
+        args.sif_path = resolve_image_reference(
+            args.sif_path, args.tag, args.cmd, DEFAULT_SINGULARITY_IMAGE
+        )
 
     return args
 
