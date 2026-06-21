@@ -74,8 +74,16 @@ How are the images created?
 ---------------------------
 
 This repo uses GitHub Actions to automatically build images on each change to
-the code and tests those images (to the extent that it can, without actual
-credentials to use models).
+the code and tests those images (to the extent that it can, without real
+credentials to test models). The workflow also runs on a daily schedule, so the
+images are rebuilt regularly even when the code hasn't changed. This picks up
+new releases of Codex, Claude Code, and Pi, as well as upstream package and
+base-image updates.
+
+.. note::
+
+   You should NOT update the harnesses yourself, since as soon as you exit the
+   container you'll lose those changes.
 
 The `main workflow
 <https://github.com/NICHD-BSPC/llm/tree/main/.github/workflows/main.yml>`__
@@ -91,11 +99,43 @@ When this happens on code in the ``main`` branch, both images are pushed to the
 
 GitHub Actions publishes the Podman image to GHCR with these tags:
 
-- ``sha-<git sha>``
-- ``latest`` on ``main``
-- ``claude-<version>``
-- ``codex-<version>``
-- ``pi-<version>``
+- ``sha-<git sha>`` for every build
+- ``claude-<version>``, ``codex-<version>``, ``pi-<version>`` pinning each
+  harness to a specific version
+- ``claude-latest``, ``codex-latest``, ``pi-latest`` pointing at the newest
+  build for each harness
+- ``latest`` (the newest overall build) on ``main``
+
+The Singularity (SIF) image is published to the ``-sif`` GHCR package with the
+same set of tags.
+
+``latest`` tags
+~~~~~~~~~~~~~~~
+
+Because the images are rebuilt daily, the overall ``latest`` tag changes every
+day even when nothing you care about has changed. To avoid forcing a fresh
+image pull every new day you run ``launch.py``, the workflow keeps the
+per-harness ``*-latest`` tags stable:
+
+- A ``<harness>-<version>`` tag is only pushed the first time that version is
+  seen. If it already exists in the registry, it is left untouched.
+- ``<harness>-latest`` points to the ``<harness>-<version>`` tag of the built
+  harness version (in practice, this is always the latest), so its digest only
+  moves when that harness's version actually changes.
+
+This is why :ref:`launch` defaults to the per-harness ``*-latest`` tag for the
+harness you run (e.g. ``codex-latest`` for :cmd:`codex`): you only re-pull when
+your harness has a new version, not every day.
+
+There is a trade-off here. If there's a new claude version, but codex didn't
+change, the image with the new claude version gets other system libraries
+updated as well. But the still-the-same codex version does not. So the codex
+version would be the latest for codex, but might have "stale" system libraries.
+
+In practice, these harnesses update very frequently (it's uncommon to go a week
+without an update!), so the system libraries are not expected to get stale. You
+can always pass ``--tag latest`` to :ref:`launch` to always use the newest
+overall image instead.
 
 The GitHub Actions container workflow builds ``linux/amd64`` images only. It
 first builds and tests the Podman image, then derives the version tags by

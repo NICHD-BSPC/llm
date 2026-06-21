@@ -164,9 +164,13 @@ This will update the credentials files in place, and since they are mounted
 "live" into the container, the running Claude Code session will see the update,
 and will be able to connect on the next prompt submission.
 
-Each time you start the container, you will use the latest built image from
-this repo, ``ghcr.io/nichd-bspc/llm:latest`` for podman or
-``oras://ghcr.io/nichd-bspc/llm-sif:latest`` for Singularity.
+Each time you start the container, you will use the latest built image for the
+harness you are launching: ``ghcr.io/nichd-bspc/llm:claude-latest`` for podman
+or ``oras://ghcr.io/nichd-bspc/llm-sif:claude-latest`` for Singularity. These
+per-harness tags only move when Claude Code itself changes version, so you are
+not pulling a fresh image every day when Claude Code is unchanged. To pin a
+specific version or use the latest overall image, pass ``--image-name`` or
+``--tag`` to :ref:`launch` (see :ref:`tools`).
 
 
 .. seealso::
