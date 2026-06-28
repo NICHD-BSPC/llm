@@ -1,22 +1,22 @@
 Disclosure of AI use
 ====================
 
-AI was used in muliple ways in this project. Every line was manually inspected.
+AI was used in multiple ways in this project. Every line was manually inspected.
 The committing author is entirely responsible and accountable for the entirety
 of their commits.
 
-Claude Code (wih Sonnet 4.6, Opus 4.6, Opus 4.7) and Codex (with GPT 5.4) were
+Claude Code (with Sonnet 4.6, Opus 4.6, Opus 4.7) and Codex (with GPT 5.4) were
 used in the following ways:
 
 - Sketching out initial ideas for launch.py
-- Converting an eariler functional based approach of launch.py to an object-oriented
+- Converting an earlier functional based approach of launch.py to an object-oriented
   approach using a handwritten, intentionally-incomplete draft as a template
 - Proposing documentation reorganization
 - Cleaning up documentation: identifying repeated sections; consolidating where
   possible (including some AI-rewritten sections in the process), adding cross-links where appropriate
 - Generating draft of the troubleshooting page (using the rest of the docs as input)
 - Generating code that was then reviewed/fixed/edited by hand, line-by-line
-- Initial drafts of GitHub Actions workflows, espeically providing snippets for
+- Initial drafts of GitHub Actions workflows, especially providing snippets for
   uploading to GitHub Container Registry with tagged images, and later
   refactoring of workflows into a single job.
 - Iterating on ideas for how best to mount host files and dirs into the

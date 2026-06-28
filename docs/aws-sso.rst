@@ -1,5 +1,5 @@
-Setting up AWS STRIDES Single Sign-On
-=====================================
+Setting up AWS Single Sign-On
+=============================
 
 Why?
 ----
@@ -21,7 +21,7 @@ is not documented here yet.
 
    This section is :nih:`NIH-specific`; other institutions will have a different
    process. Once you can successfully authenticate to the SSO start URL for your
-   institution, continue to step 2.
+   institution, continue to step 2, "AWS CLI v2 setup".
 
 **Prerequisites:**
 
@@ -62,8 +62,8 @@ This initial setup only needs to be done once per group.
 -------------------
 
 AWS CLI v2 is used to authenticate with AWS. Claude Code uses it to refresh
-credentials whenever possible, and it is also useful for working with API keys;
-see :doc:`bedrock-keys`.
+credentials whenever possible, and it is also useful for working with API keys
+if you end up needing that; see :doc:`bedrock-keys` for more on this.
 
 - Install the `AWS Command Line Interface (AWS CLI) Version 2 <https://aws.amazon.com/cli/>`_
   and ensure it is on your ``$PATH``.
@@ -74,8 +74,8 @@ see :doc:`bedrock-keys`.
 
 .. tip::
 
-   You are complete with this phase when you open a new terminal, activate the
-   conda environment if needed, and run :cmd:`aws` to get:
+   You are complete with this phase when you open a new terminal, run
+   :cmd:`aws` and get:
 
    .. code-block:: text
 
@@ -117,7 +117,7 @@ authenticate.
 
 You can inspect the resulting config in :file:`~/.aws/config`.
 
-Then run the command it suggests, again using your actual account number:
+Then run the command it suggests at the end, again using your actual account number:
 
 .. code-block:: bash
 
@@ -156,28 +156,45 @@ shared successfully and can be used until your session expires.
 .. tip::
 
    You are complete with this phase when :cmd:`aws sso login` opens the browser
-   flow successfully and you receive the shared-credentials confirmation.
+   flow successfully and the page says, *"Your credentials have been shared
+   successfully and can be used until your session expires. You can now close
+   this tab."*
 
 4. Routine usage
 ----------------
 
-Once AWS SSO is set up, it usually does not need to be touched again.
+Once AWS SSO is set up, it usually does not need to be changed and you just use
+it to refresh credentials.
 
-The SSO session typically lasts about eight hours before you need to log in
-again. Within that window, the AWS SDK automatically refreshes the shorter-lived
-role credentials as needed.
+The typical use-case for this repo is to use :ref:`refresh`, which
+automatically handles this for you.
 
-Running:
+The SSO session lasts for as long as the AWS account admins have configured. It
+can be hours or days before you need to log in again. Within that window, the
+AWS SDK automatically refreshes the shorter-lived (typically 1-hr) role
+credentials as needed.
+
+.. warning::
+
+   **This automatic refreshing of the short-lived credentails only works on the
+   local machine.** See :ref:`container-notes-login-model` for why.
+
+   This means that if you are working on a remote machine, and the short-lived
+   credentials expire every hour, you will need to run :ref:`refresh` every
+   hour.
+
+   To streamline this as much as possible, you may want to ensure that:
+
+   - you have an SSH key set up on the remote host
+   - you have the ssh agent running with that key
+   - you create an alias like ``alias r='refresh.py --remote biowulf.nih.gov'``
+     (or whatever host name you are working on).
+
+   Then it becomes a matter of hitting ``r`` on the local machine once an hour.
+
+
+At any point, running this on a local machine will open a browser for reauthentication:
 
 .. code-block:: bash
 
    aws sso login
-
-opens a browser for reauthentication.
-
-**Importantly, this only works on a local machine.** :cmd:`aws sso login` listens on a
-port on the machine where it is called. After login, the browser sends a
-response back to ``localhost`` on that same machine.
-
-To use these credentials on another host, you can manually transfer them or use
-the :doc:`tools` described :cmd:`refresh.py` workflow.

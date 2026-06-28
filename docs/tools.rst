@@ -1,13 +1,15 @@
+.. _tools:
+
 Tools Reference
 ===============
 
 This repository revolves around three utility scripts:
 
-- :file:`refresh.py` refreshes local credentials and can copy them to a remote host
-- :file:`launch.py` starts Codex or Claude Code inside a container
-- :file:`build.py` builds the container image itself
+1. :file:`refresh.py` refreshes local credentials and can copy them to a remote host
+2. :file:`launch.py` starts Codex or Claude Code inside a container
+3. :file:`build.py` builds the container image itself
 
-Most users only need :file:`refresh.py` and :file:`launch.py`.
+You'll usually only need :file:`refresh.py` and :file:`launch.py`.
 
 Use :file:`build.py` only if you want to build your own image rather than use
 the hosted one.
@@ -52,6 +54,12 @@ variable):
 
    export PATH="$PATH:~/llm"
 
+.. note::
+
+   See `Julia Evans' excellent writeup
+   <https://jvns.ca/blog/2025/02/13/how-to-add-a-directory-to-your-path/>`__ on
+   ``$PATH`` and adding to it if you're unfamiliar with the concept.
+
 .. tip::
 
    You know it's working if you open a new terminal and can run :cmd:`launch.py
@@ -67,10 +75,20 @@ Refreshes credentials locally, and optionally copies them to a remote host.
 - Refreshes Codex authentication (:file:`~/.codex/auth.json`). This is mounted inside running Codex containers, so they will see the new credentials when refreshed.
 - Refreshes AWS SSO credentials and exports them as JSON to
   :file:`~/.aws/credentials.json`. This is used by the ``llm-export`` profile
-  via ``credential_process``.
+  via ``credential_process`` so containers can read live credentials without a
+  restart; see :ref:`config-aws-export` for why this indirection exists.
 - Optionally pushes refreshed credentials to a remote host (such as NIH's Biowulf).
 - Optionally pushes entire config directories to remote.
 - Optionally prints Bedrock bearer-token exports for tools that do not use the AWS SDK.
+
+.. note::
+
+   If credentials expire mid-session, you can run :cmd:`refresh.py` and then
+   immediately re-try the prompt without exiting the agent or the container.
+
+   This works on a remote, too -- using the ``--remote`` option will push the
+   credentials to the remote, and a running container on the remote will
+   automatically pick up the refreshed credentials.
 
 Examples
 ~~~~~~~~
@@ -80,6 +98,14 @@ Refresh codex & aws locally:
 .. code-block:: bash
 
    refresh.py
+
+Refresh all and push credentials to a remote system. This exports AWS session
+credentials as :file:`~/.aws/credentials.json` and configures the
+``llm-export`` profile on the remote:
+
+.. code-block:: bash
+
+   refresh.py --remote biowulf.nih.gov
 
 Only refresh codex, and push to remote system:
 
@@ -92,14 +118,6 @@ Refresh all, push credentials **as well as entire agent config dirs** to remote 
 .. code-block:: bash
 
    refresh.py --full --remote biowulf.nih.gov
-
-Refresh all and push credentials to a remote system. This exports AWS session
-credentials as :file:`~/.aws/credentials.json` and configures the
-``llm-export`` profile on the remote:
-
-.. code-block:: bash
-
-   refresh.py --remote biowulf.nih.gov
 
 See what files will be pushed with ``--full``:
 
@@ -119,30 +137,32 @@ support AWS SSO:
 ``launch.py``
 -------------
 
-Runs the agent inside a container, assuming credentials are already available.
+Runs the agent inside a container, assuming credentials are already available,
+e.g., by running :ref:`refresh`.
 
+- Starts :cmd:`codex`, :cmd:`claude`, :cmd:`pi`, or an interactive shell in a container
+- Passes through mounts, env vars, cert bundles, and optional conda environments
 - Detects Podman vs Singularity, or accepts an explicit backend
 - Defaults to automatically pulling the latest containers published by this
   repo, from GitHub Container Registry (https://ghcr.io/nichd-bspc/llm)
 - By default, mounts the current working directory and only the
   credential/config paths relevant to the called tool
-- Starts :cmd:`codex`, :cmd:`claude`, :cmd:`pi`, or an interactive shell
-- Passes through mounts, env vars, cert bundles, and optional conda environments
 
 Default config and credential mounts
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-In addition to the current working directory, :cmd:`launch.py` mounts the
-following host paths into :file:`/home/devuser` inside the container when they
-exist:
+By default, :cmd:`launch.py` mounts the current working directory.
 
-- ``codex``: :file:`~/.codex`
-- ``claude``: :file:`~/.claude` and :file:`~/.claude.json`
-- ``pi``: :file:`~/.pi`
-- ``shell``: :file:`~/.codex`, :file:`~/.claude`, :file:`~/.claude.json`, and :file:`~/.pi`
+Also by defaut, it mounts the following host paths in a tool-specific manner
+into :file:`/home/devuser` inside the container when they exist:
+
+- :cmd:`launch.py codex`: :file:`~/.codex`
+- :cmd:`launch.py claude`: :file:`~/.claude` and :file:`~/.claude.json`
+- :cmd:`launch.py pi`: :file:`~/.pi`
+- :cmd:`launch.py shell`: :file:`~/.codex`, :file:`~/.claude`, :file:`~/.claude.json`, and :file:`~/.pi`
 
 When Amazon Bedrock is enabled for the effective container environment,
-:file:`~/.aws` is also mounted:
+:file:`~/.aws` is also mounted under these circumstances:
 
 - ``claude``: when ``CLAUDE_CODE_USE_BEDROCK=1``
 - ``pi``: when ``PI_USE_BEDROCK=1``
@@ -167,14 +187,30 @@ Example usage
 Basic usage
 ^^^^^^^^^^^
 
+.. note::
+
+   Any arguments that come **before** the tool (codex/claude/pi) are interpreted as arguments for ``launch.py``.
+
+   Any arguments that come **after** the tool are interpreted as arguments for the tool.
+
+   For example, this shows the help for :cmd:`launch.py` (note the ``-h`` comes *before* ``codex``):
+
+   .. code-block:: bash
+
+      launch.py -h codex
+
+   But this shows the help for codex, as run through the container (note the ``-h`` comes *after* ``codex``):
+
+   .. code-block:: bash
+
+      launch.py codex -h
+
 Run codex, detecting container runtime automatically (Podman on Mac, Singularity
 on Linux):
 
 .. code-block:: bash
 
    launch.py codex
-   launch.py claude
-   launch.py pi
 
 Run a shell for debugging -- this will mount credentials for all supported
 agents:
@@ -199,11 +235,7 @@ One-shot prompt with an attached image and then exit:
      -- \
      "extract the text from this image and return as JSON"
 
-Check help:
 
-.. code-block:: bash
-
-   launch.py codex -h
 
 Mounts and read-only
 ^^^^^^^^^^^^^^^^^^^^
@@ -213,13 +245,6 @@ Let the container see something outside the working directory:
 .. code-block:: bash
 
    launch.py --mount /data/experiment1 codex
-
-To keep a default set of extra mounts, put them in
-``LLM_DEVCONTAINER_MOUNTS`` as a shell-style list:
-
-.. code-block:: bash
-
-   export LLM_DEVCONTAINER_MOUNTS="$HOME/data /scratch/shared:/scratch/shared:ro"
 
 Mount a directory read-only inside the container:
 
@@ -234,15 +259,25 @@ modify your files:
 
    launch.py --read-only codex
 
+To keep a default set of extra mounts, put them in
+``LLM_DEVCONTAINER_MOUNTS`` as a shell-style (space-separated) list:
+
+.. code-block:: bash
+
+   export LLM_DEVCONTAINER_MOUNTS="$HOME/data /scratch/shared:/scratch/shared:ro"
+
+   # equivalent of the following, but will happen by default:
+   # launch.py --mount $HOME/data --mount /scratch/shared:/scratch/shared:ro
+
 Mount a conda env into the container and prepend it to the path so the agent
-can use it (*only works on Linux*):
+can use it (only works on Linux, but see :ref:`conda-only-linux` for
+a workaround):
 
 .. code-block:: bash
 
    launch.py --conda-env my-env codex
 
-This is equivalent to the following "mount + prepend to path" combination,
-which can be used for more complex scenarios:
+Using ``--conda-env`` is a shortcut for the following:
 
 .. code-block:: bash
 
@@ -254,7 +289,8 @@ which can be used for more complex scenarios:
 Environment and certificates
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Provide additional environment variables or override what's in the environment:
+Provide additional environment variables to the container, or override what's
+in the environment:
 
 .. code-block:: bash
 
@@ -326,9 +362,9 @@ default in the container:
 - For ``claude``, ``pi``, and ``shell``: When Bedrock is enabled (via
   ``CLAUDE_CODE_USE_BEDROCK=1`` or ``PI_USE_BEDROCK=1``): Host environment
   variables starting with ``AWS_``. If ``AWS_PROFILE`` is set or the automatic
-  ``llm-export`` profile is in use, launcher omits host session-key variables
-  such as ``AWS_ACCESS_KEY_ID`` and ``AWS_SESSION_TOKEN`` so the
-  ``credential_process`` in :file:`~/.aws/config` remains authoritative.
+  ``llm-export`` profile is in use, don't send  ``AWS_ACCESS_KEY_ID`` or
+  ``AWS_SESSION_TOKEN`` to the container so that ``credential_process`` in
+  :file:`~/.aws/config` works properly.
 
 **Certificate variables (when** ``--certs`` **is provided):**
 

@@ -24,8 +24,8 @@ and you can authenticate.
 
 1. **Set up AWS SSO.**  See :nih:`NIH-specific` :doc:`aws-sso` for the full
    walkthrough. This includes setting up your group for access, installing AWS
-   CLI v2, and authenticating. You should be able to successfully log in with
-   :cmd:`aws sso login`.
+   CLI v2, and authenticating. You should be able to successfully log in on
+   your local machine with :cmd:`aws sso login`.
 
 Step 2. Export env vars
 -----------------------
@@ -64,13 +64,15 @@ Export these environment variables, for example in :file:`~/.bashrc`:
   $CLAUDE_CODE_USE_BEDROCK` gives ``1``.
 
 
-.. note::
+.. warning::
 
-   Although the `Claude Code on Amazon Bedrock
+   The `Claude Code on Amazon Bedrock
    <https://code.claude.com/docs/en/amazon-bedrock>`__ docs describe adding
-   ``"awsAuthRefresh": "aws sso login --profile myprofile"`` to your config,
-   this is only for when you're running Claude Code *without* a container. The
-   :ref:`refresh` script will take care of this for us.
+   ``"awsAuthRefresh": "aws sso login --profile myprofile"`` to your config.
+   But this is only for when you're running Claude Code *without* a container.
+
+   We are using containers though, so the :ref:`refresh` script will take care
+   of this for us.
 
 Step 3. Claude Code locally (Podman container)
 ----------------------------------------------
@@ -87,6 +89,10 @@ order to be able to use `codex login`.
 
 3. Submit a prompt like "testing" to confirm that the model responds.
 
+.. tip::
+
+   You know it's working when you run :cmd:`launch.py claude`, send a prompt,
+   and get a response from the model.
 
 .. details:: What did this do?
 
@@ -97,11 +103,11 @@ order to be able to use `codex login`.
      empty :file:`~/.claude` directory.
    - The default podman image was downloaded if needed, a container was created
    - The :file:`~/.claude.json` file and any existing :file:`~/.claude` directory was mounted into the container
-   - Host variables starting with ``CLAUDE_CODE`` were passed through to the container
+   - Host variables starting with ``CLAUDE_CODE`` or ``ANTHROPIC`` were passed through to the container
    - Because ``CLAUDE_CODE_USE_BEDROCK=1`` was set, :file:`~/.aws` and relevant
-     host ``AWS_*`` settings were also passed through so Claude could use AWS
-     credentials. If ``AWS_PROFILE`` is used, launcher avoids passing host
-     session-key variables that would override the mounted profile.
+     host ``AWS_*`` settings were also passed through to the container so
+     Claude could use AWS credentials.
+
 
 Step 4. Claude Code remote (Singularity)
 ----------------------------------------
@@ -120,14 +126,18 @@ Step 4. Claude Code remote (Singularity)
       sinteractive             # allocate interactive node
       module load singularity  # make Singularity available
 
-3. If you don't already have it available, download the :ref:`launch` script from the repo to the remote.
+3. If you don't already have it available, download the :ref:`launch` script from the repo to the remote (see :ref:`getscripts` if needed).
 
-4. Run the following:
+4. Run the following on the remote system:
 
    .. code-block:: bash
 
       launch.py claude
 
+.. tip::
+
+   You know it's working when you run :cmd:`launch.py claude`, send a prompt,
+   and get a response from the model.
 
 .. details:: What did this do?
 
@@ -164,14 +174,30 @@ This will update the credentials files in place, and since they are mounted
 "live" into the container, the running Claude Code session will see the update,
 and will be able to connect on the next prompt submission.
 
-Each time you start the container, you will use the latest built image from
-this repo, ``ghcr.io/nichd-bspc/llm:latest`` for podman or
-``oras://ghcr.io/nichd-bspc/llm-sif:latest`` for Singularity.
+Each time you start the container, you will use the latest built image for the
+harness you are launching: ``ghcr.io/nichd-bspc/llm:claude-latest`` for podman
+or ``oras://ghcr.io/nichd-bspc/llm-sif:claude-latest`` for Singularity. These
+per-harness tags only move when Claude Code itself changes version, so you are
+not pulling a fresh image every day when Claude Code is unchanged. To pin a
+specific version or use the latest overall image, pass ``--image-name`` or
+``--tag`` to :ref:`launch` (see :ref:`tools`).
 
+Next steps
+----------
 
-.. seealso::
+You can optionally move on to getting set up with Pi, for a vendor- and model-agnostic agent using Bedrock.
 
-   - `How Claude Code works <https://code.claude.com/docs/en/how-claude-code-works>`__
-   - `Understanding the context window <https://code.claude.com/docs/en/context-window>`__
-   - `Common workflows <https://code.claude.com/docs/en/common-workflows>`__
-   - `Explore the .claude directory <https://code.claude.com/docs/en/claude-directory>`__
+Otherwise, you should read up on the following documentation:
+
+**From these docs:**
+
+- :ref:`launch` for more advanced ways of calling :cmd:`launch.py`
+- :ref:`containers` for more details on containers
+- :ref:`tips` for working with agents in general
+
+**From official Claude docs:**
+
+- `How Claude Code works <https://code.claude.com/docs/en/how-claude-code-works>`__
+- `Understanding the context window <https://code.claude.com/docs/en/context-window>`__
+- `Common workflows <https://code.claude.com/docs/en/common-workflows>`__
+- `Explore the .claude directory <https://code.claude.com/docs/en/claude-directory>`__

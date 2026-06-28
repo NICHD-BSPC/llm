@@ -75,9 +75,10 @@ file for persistence, after which this file will look something like:
     "model": "opus"
   }
 
-You can prevent the model from accessing paths. For example, to exclude
-the :file:`data` and :file:`env` directories from being read in the current
-project, you might include this in a :file:`.claude/settings.json` in the
+You can prevent the model from accessing paths within the current directory.
+For example, to exclude the :file:`data` and :file:`env` directories from being
+read in the current project (despite the current directory being mounted in the
+container), you might include this in a :file:`.claude/settings.json` in the
 current project:
 
 .. code-block:: json
@@ -86,8 +87,12 @@ current project:
      "permissions": {"deny": ["Read(./data)", "Read(./env)"]}
   }
 
+This uses the Claude sandboxing, which does not seem as robust as
+containerization.
+
 In such cases, you should probably include the directories in a ``.gitignore``
-file so that tools like ``ripgrep`` (``rg``) won't look in there either.
+file so that when Claude runs tools like ``ripgrep`` (``rg``) then it won't
+look in there either.
 
 If you copy the :file:`tools/claude-status.sh` file from this repo to your
 :file:`~/.claude` directory, you can add the following block to
@@ -120,9 +125,72 @@ See `Claude Code Settings <https://code.claude.com/docs/en/settings>`__ for more
 Configure AWS SSO
 -----------------
 
+Relevant files:
+
 - :file:`~/.aws`: Config directory. **Mounted into containers running Claude or Pi with Bedrock.**
-- :file:`~/.aws/config`: contains profile information (SSO session & account ID)
-- :file:`~/.aws/sso`: credentials for SSO
+- :file:`~/.aws/config`: contains profile information (SSO session & account ID),
+  including the ``llm-export`` profile written by :ref:`refresh` (see below)
+- :file:`~/.aws/sso`: SSO token cache, written by :cmd:`aws sso login`. Used on
+  the **local** machine to refresh role credentials; *not used inside containers*.
+- :file:`~/.aws/credentials.json`: short-lived role credentials exported by
+  :ref:`refresh` in process-provider JSON format. *This is the file the container
+  actually reads for Bedrock.*
+
+.. _config-aws-export:
+
+How Bedrock credentials reach the container
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The AWS SDK running *inside* a container cannot perform an SSO login, because that
+requires a browser and a localhost redirect. Such redirects to localhost do not
+work in a container, nor on a remote host. Remember, we're purposefully
+isolating things with containers..see :ref:`container-notes-login-model` for
+more.
+
+Since the container cannot refresh SSO credentials on its own, it needs to
+access credentials that have already been handled by the local host.
+
+To handle this, :ref:`refresh` does the following on the local host:
+
+1. Ensures the SSO session is valid (running :cmd:`aws sso login` if needed).
+2. Runs :cmd:`aws configure export-credentials --format process` to obtain the
+   current short-lived role credentials (access key, secret, session token, and
+   an ``Expiration``) as JSON (technically this is "process-provider" formatted
+   JSON, which is what we need in this case).
+3. Writes that JSON to :file:`~/.aws/credentials.json`.
+4. Adds an ``llm-export`` profile to :file:`~/.aws/config` whose
+   ``credential_process`` simply prints that file to stdout:
+
+   .. code-block:: ini
+
+      [profile llm-export]
+      credential_process = sh -c 'cat ~/.aws/credentials.json'
+
+When :ref:`launch` starts a container where Bedrock is used, it mounts
+:file:`~/.aws` and sets ``AWS_PROFILE=llm-export`` (unless you already set an
+override with ``AWS_PROFILE``). The SDK then resolves credentials by running
+the ``credential_process``, which reads :file:`~/.aws/credentials.json`.
+
+Why this indirection instead of plain ``AWS_*`` environment variables?
+
+The primary reason is that environment variables are frozen at container start
+and would go stale.
+
+However, the AWS SDK has a `documented mechanism
+<https://docs.aws.amazon.com/sdkref/latest/guide/feature-process-credentials.html>`__,
+``credential_process``, that is NOT cached and is **re-invoked every call** by
+the SDK. As such, it need to be a fast-running command, which is why we're
+using ``cat`` here.
+
+When :ref:`refresh` rewrites :file:`~/.aws/credentials.json` mid-session, and
+that file has been mounted into the container (which happens by default), the
+running container runs that ``credential_process`` on the next call to the
+model which will pick up the new credentials. No container restart needed.
+
+Because of this, :ref:`launch` deliberately does **not** forward
+``AWS_ACCESS_KEY_ID`` / ``AWS_SESSION_TOKEN`` into the container when the
+``llm-export`` profile (or any ``AWS_PROFILE``) is in use, so that stale env
+vars cannot shadow the ``credential_process`` mechanism.
 
 Configure Pi
 ------------

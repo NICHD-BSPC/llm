@@ -339,7 +339,7 @@ host conda environment is ``arm64`` and the binaries will not run inside the
 
 Additionally, macOS filesystems are case-insensitive, which prevents some
 conda packages (like ``ncurses``) from working even if the architecture
-matched.
+matched. See :ref:`conda-only-linux` for a workaround.
 
 On a compatible Linux host:
 
