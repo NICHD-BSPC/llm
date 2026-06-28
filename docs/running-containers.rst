@@ -1,3 +1,5 @@
+.. _containers:
+
 Running agents in containers
 ============================
 
@@ -30,27 +32,41 @@ Without a container, agent tools generally have read access to the entire host
 filesystem. If you have PII or sensitive information anywhere on the system, it
 could potentially be exposed to agents.
 
-Codex and Claude Code both support sandboxing. That can help restrict writes,
-but it does not reliably restrict reads. Those tools usually need access to
-standard binaries like :cmd:`git` and :cmd:`ls` outside the working directory, which
-still requires filesystem visibility.
+Codex and Claude Code both support sandboxing. Pi does not. The configuration
+of sandboxes can be finicky, and varies by harness. In practice, using
+a sandbox still requires vigilant monitoring of the model's requests and
+careful management of allow/deny lists in respective agents' config files to
+avoid exposing private information. With no standardized config format, it's
+tricky to maintain this.
 
-However, using a sandbox still requires vigilant monitoring of the model's
-requests and careful management of allow/deny lists in respective agents'
-config files to avoid exposing private information. With no standardized config
-format, it's tricky to maintain this.
+The primary challenge is that these tools usually need access to standard
+binaries like :cmd:`git` and :cmd:`ls`, which are outside the working directory
+and therefore if we completely restricted *all* read access, these binaries
+couldn't be used.
 
-Running inside a container uses the principle of least privilege, narrowing
-exposure to the mounted workspace and the small set of config paths (here, this
-is done by :ref:`launch`). Tools such as :cmd:`git` and :cmd:`ls` are installed
-inside the container, so the agent does not need to read them from the host.
+The solution is to run them in a container. Running inside a container uses the
+principle of least privilege, narrowing exposure to the mounted workspace and
+the small set of config paths (here, this is done by :ref:`launch`). Tools such
+as :cmd:`git` and :cmd:`ls` are installed inside the container, so the agent
+does not need to read them from the host.
 
-In practice, containers reduce the blast radius of problems caused by agents.
+In practice, containers reduce the blast radius of problems caused by agents,
+at the expense of additional complexity. The entire goal of this repo is to
+make that additional complexity as easy to deal with as possible.
 
 Because the container already provides isolation, Codex's own sandbox is
 disabled inside the container with ``--sandbox danger-full-access``. The
 container boundary replaces the built-in sandbox rather than layering on top of
 it.
+
+Another solution would be to run in a full virtual machine (VM) but this ends
+up being a lot more overhead than a container, and doesn't work on a remote
+system like NIH's Biowulf.
+
+.. warning::
+
+   These containers do NOT lock down network access -- they are primarily
+   intended to lock down inappropriate filesystem access.
 
 Podman, Docker, Singularity?
 ----------------------------
@@ -137,11 +153,12 @@ without an update!), so the system libraries are not expected to get stale. You
 can always pass ``--tag latest`` to :ref:`launch` to always use the newest
 overall image instead.
 
-The GitHub Actions container workflow builds ``linux/amd64`` images only. It
-first builds and tests the Podman image, then derives the version tags by
-running the built container and reading ``claude --version``, ``codex
---version``, and ``pi --version``. The Singularity phase then converts that
-same tested Podman image into a SIF artifact.
+The GitHub Actions container workflow builds ``linux/amd64`` images only. Podman automatically handles this different architecture on macOS. There is a performance hit, but the limiting factor of these harnesses is model calling, not CPU usage.
+
+The GitHub Actions workfow first builds and tests the Podman image, then
+derives the version tags by running the built container and reading ``claude
+--version``, ``codex --version``, and ``pi --version``. The Singularity phase
+then converts that same tested Podman image into a SIF artifact.
 
 The workflow also sets ``org.opencontainers.image.source`` to the GitHub
 repository URL so the GHCR package stays linked to the repository and inherits
@@ -151,15 +168,7 @@ Running containers without ``launch.py``
 ----------------------------------------
 
 You can use the containers outside the context of :ref:`launch` like
-this to get a bash shell, from which you can start one of the agents.
-
-This will not mount the credentials properly, and Singularity will
-**automatically mount your entire home directory** unless you use ``--no-home``
-and will **expose all env vars** unless you use ``--cleanenv``.
-
-Consider using the output of :cmd:`launch.py --dry-run shell` as a starting
-point for composing your own commands, since that shows all of the mounts and
-environment variable exports needed.
+this to get a bash shell, from which you can start one of the agents:
 
 .. code-block:: bash
 
@@ -168,6 +177,19 @@ environment variable exports needed.
 .. code-block:: bash
 
    singularity exec ghcr.io/nichd-bspc/llm-sif bash
+
+.. warning::
+
+   This will not mount the credentials properly.
+
+   Singularity will **automatically mount your entire home directory** unless
+   you use ``--no-home`` and will **expose all env vars** unless you also use
+   ``--cleanenv``.
+
+   Consider using the output of :cmd:`launch.py --dry-run shell` as a starting
+   point for composing your own commands, since that shows all of the mounts
+   and environment variable exports needed.
+
 
 .. _container-notes-terminology:
 
@@ -231,16 +253,28 @@ Codex is still listening inside the container on the *remote* machine. The
 redirect never reaches the remote, let alone inside the container on the
 remote, so login cannot complete there either.
 
-Port forwarding and tunneling can work around this, but copying the relevant
-credential files is simpler.
+Port forwarding and tunneling can work around this, but it gets awkward.
+Copying the relevant credential files is simpler.
 
 :ref:`refresh` automates this. Locally, it is just running :cmd:`codex login`
 and :cmd:`aws sso login` (but only if you're not already logged in). It knows
 what files need to be transported to the remote host (see :doc:`config-files`
 for these) and takes care of the ``rsync`` commands for that as well.
 
-This copying mechanism is also one of the
-approaches suggested in the `Codex auth documentation
+For AWS/Bedrock specifically, :ref:`refresh` does not copy the
+:file:`~/.aws/sso` token cache to the remote. Instead it creates
+:file:`~/.aws/credentials.json` with current short-lived role credentials on
+the host and syncs :file:`~/.aws/config` and :file:`~/.aws/credentials.json`
+(the ``llm-export`` profile and its credentials file). See
+:ref:`config-aws-export` for how that mechanism works.
+
+Because the remote runs entirely off these exported credentials and cannot
+refresh them independently, they expire on the usual STS schedule (typically ~1
+hour) and you must re-run :ref:`refresh` to push fresh ones; see the warning in
+:doc:`aws-sso`.
+
+Note that this mechanism of copying credentials to other systems is also one of
+the approaches suggested in the `Codex auth documentation
 <https://developers.openai.com/codex/auth#fallback-authenticate-locally-and-copy-your-auth-cache>`_.
 
 Refreshing credentials without stopping container
@@ -254,7 +288,8 @@ connect due to credentials expiring, but as soon as you use :ref:`refresh` and
 the credentials on the host are updated, Claude Code can see them
 since they are mounted into the container. While Claude Code does retry
 attempts, if it has been a while between old credentials expiring and new ones
-being available then you might need to re-send your latest prompt.
+being available then you might need to re-send your latest prompt, or just send
+"continue" as the next prompt.
 
 
 .. _container-notes-persistent-mounts:
@@ -275,7 +310,7 @@ the working directory and the crendential files, and allows you to specify
 additional paths if needed with ``--mount``.
 
 The host's home directory is not mounted. Even though Singularity mounts it by
-default, this setup disables that behavior to reduce exposure.
+default, this setup specifically disables that behavior to reduce exposure.
 
 Only the credentials and config needed for each tool is mounted -- unless you
 call :ref:`launch` with ``shell`` which will mount them all.
@@ -291,6 +326,7 @@ format as ``--mount``. For example:
 The user inside the container is called ``devuser``, and the home directory is
 created at :file:`/home/devuser` inside the container image.
 
+.. _conda-only-linux:
 
 Conda envs only work on Linux
 -----------------------------
@@ -308,17 +344,19 @@ the container without needing to change the image.
      --mount ~/data/examples \
      codex
 
-However, if you mount binaries from a macOS ARM64 host, they will not run inside
-the container because of the architecture mismatch. There is a workaround but it
-is not straightforward and requires root. The primary limitation is that the
-macOS filesystem *is not case-sensitive*. So common conda packages, like
-``ncurses``, that rely on case-senstive filenames, will not install.
+However, if you mount binaries from a macOS ARM64 host to the Linux AMD64
+container, they will not run inside the container because of the architecture
+mismatch. The primary limitation is that the macOS filesystem *is not
+case-sensitive*. So common conda packages, like ``ncurses``, that rely on
+case-senstive filenames, will not install.
 
-This case-sensitivity is on the host macOS side, but a container running on
-a macOS host is inherently affected by this. So even running conda inside
-a container to build a ``linux/amd64`` env will fail (typically tools
+This case-insensitivity is on the host macOS side. A container running on
+a macOS host is still affected by this. So even running conda inside
+a container to build a ``linux/amd64`` env will fail. Typically tools
 depending on ``ncurses`` -- of which there are many -- will fail because
-ncurses requires case sensitivity).
+ncurses itself requires case sensitivity.
+
+There is a workaround, but it's not straightforward...
 
 Workaround for using conda on macOS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
