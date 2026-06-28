@@ -195,19 +195,20 @@ launching.
 Periodically, your credentials stored in :file:`~/.codex/auth.json` will
 expire. Use the :ref:`refresh` script to update them and push to a remote.
 
-You can use the ``--image-name`` argument to :cmd:`launch.py` to pin to
-a particular version: e.g., ``--image-name
-ghcr.io/nichd-bspc/llm:codex-0.125.0``, or other tags listed on the `images
-page <https://github.com/NICHD-BSPC/llm/pkgs/container/llm/versions>`__.
+Each time you start the container, you will use the latest built image for the
+harness you are launching: ``ghcr.io/nichd-bspc/llm:codex-latest`` for podman or
+``oras://ghcr.io/nichd-bspc/llm-sif:codex-latest`` for Singularity. These
+per-harness tags only move when Codex itself changes version, so you are not
+pulling a fresh image every day when Codex is unchanged.
 
-
-
-Next steps
-----------
-
-You can optionally move on to getting set up with :nih:`NIH-specific` AWS STRIDES to use Claude Code or Pi.
-
-Otherwise, you should read up on the following documentation:
+If you don't want this behavior you can use the ``--image-name`` argument to
+:ref:`launch` to pin to a particular version: e.g.,
+``--image-name ghcr.io/nichd-bspc/llm:codex-0.125.0``, or other tags listed on
+the `images page
+<https://github.com/NICHD-BSPC/llm/pkgs/container/llm/versions>`__. You can also
+pass ``--tag`` to choose a tag without retyping the full image name, e.g.
+``--tag latest`` to use the latest overall image, or ``--tag codex-0.125.0`` to
+pin a version.
 
 **From these docs:**
 

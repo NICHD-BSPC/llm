@@ -108,17 +108,35 @@ jobs:
           podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:${sha_tag}"
           podman push "${image_base}:${sha_tag}"
 
-          # Copy the same digest to all version tags so they all resolve to
-          # the identical manifest (skopeo copy by-digest guarantees this).
-          skopeo copy --all \
-            "docker://${image_base}:${sha_tag}" \
-            "docker://${image_base}:claude-${CLAUDE_VERSION}"
-          skopeo copy --all \
-            "docker://${image_base}:${sha_tag}" \
-            "docker://${image_base}:codex-${CODEX_VERSION}"
-          skopeo copy --all \
-            "docker://${image_base}:${sha_tag}" \
-            "docker://${image_base}:pi-${PI_VERSION}"
+          # Publish each harness's "<harness>-<version>" tag and move its
+          # per-harness "<harness>-latest" tag. The version tag is only pushed
+          # when it does not already exist, so the digest behind
+          # "<harness>-latest" stays stable across daily rebuilds whenever that
+          # harness's version is unchanged. This avoids forcing users to pull a
+          # fresh image every day when their harness hasn't actually changed.
+          publish_harness_tags() {
+            harness="$1"
+            version="$2"
+            version_tag="${harness}-${version}"
+            latest_tag="${harness}-latest"
+            if skopeo inspect --raw "docker://${image_base}:${version_tag}" >/dev/null 2>&1; then
+              echo "Version tag ${version_tag} already exists; reusing its digest for ${latest_tag}"
+              source_ref="${image_base}:${version_tag}"
+            else
+              echo "Publishing new version tag ${version_tag}"
+              skopeo copy --all \
+                "docker://${image_base}:${sha_tag}" \
+                "docker://${image_base}:${version_tag}"
+              source_ref="${image_base}:${sha_tag}"
+            fi
+            skopeo copy --all \
+              "docker://${source_ref}" \
+              "docker://${image_base}:${latest_tag}"
+          }
+
+          publish_harness_tags claude "${CLAUDE_VERSION}"
+          publish_harness_tags codex "${CODEX_VERSION}"
+          publish_harness_tags pi "${PI_VERSION}"
 
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
             skopeo copy --all \
@@ -180,12 +198,34 @@ jobs:
           apptainer push --allow-unsigned "./${SINGULARITY_SIF_PATH}" \
             "oras://${registry_base}:${sha_tag}"
 
-          # Retag, which happens server-side. This reuses podman login from above
-          for tag in "claude-${CLAUDE_VERSION}" "codex-${CODEX_VERSION}" "pi-${PI_VERSION}"; do
+          # Same per-harness "latest" strategy as the podman image: only push a
+          # new "<harness>-<version>" tag when it is missing, and point
+          # "<harness>-latest" at the version tag so its digest stays stable
+          # when that harness's version is unchanged. Retagging happens
+          # server-side and reuses the podman login from above.
+          publish_harness_tags() {
+            harness="$1"
+            version="$2"
+            version_tag="${harness}-${version}"
+            latest_tag="${harness}-latest"
+            if skopeo inspect --raw "docker://${registry_base}:${version_tag}" >/dev/null 2>&1; then
+              echo "Version tag ${version_tag} already exists; reusing its digest for ${latest_tag}"
+              source_ref="${registry_base}:${version_tag}"
+            else
+              echo "Publishing new version tag ${version_tag}"
+              skopeo copy --all \
+                "docker://${registry_base}:${sha_tag}" \
+                "docker://${registry_base}:${version_tag}"
+              source_ref="${registry_base}:${sha_tag}"
+            fi
             skopeo copy --all \
-              "docker://${registry_base}:${sha_tag}" \
-              "docker://${registry_base}:${tag}"
-          done
+              "docker://${source_ref}" \
+              "docker://${registry_base}:${latest_tag}"
+          }
+
+          publish_harness_tags claude "${CLAUDE_VERSION}"
+          publish_harness_tags codex "${CODEX_VERSION}"
+          publish_harness_tags pi "${PI_VERSION}"
 
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
             skopeo copy --all \
