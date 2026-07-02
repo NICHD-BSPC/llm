@@ -1,6 +1,14 @@
 Changelog
 =========
 
+2026-07-02
+----------
+
+- Add ``--ro`` flag to ``launch.py`` to protect subdirectories of the working
+  directory and make them read-only
+- Rename original ``--read-only``, which made the *entire* working directory
+  read-only, to ``--global-read-only``.
+
 2026-07-01
 ----------
 

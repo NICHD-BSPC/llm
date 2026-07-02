@@ -414,6 +414,7 @@ class Launcher:
         ]
 
         self._resolve_masks()
+        self._resolve_ro_mounts()
 
         if args.path_prepend and PurePosixPath(args.path_prepend).is_absolute():
             if not self._container_path_is_mounted(args.path_prepend):
@@ -535,6 +536,55 @@ class Launcher:
             container_target = str(PurePosixPath(container_workspace) / rel)
             if container_target not in args.mask_targets:
                 args.mask_targets.append(container_target)
+
+    def _resolve_ro_mounts(self):
+        """Mount workspace subdirectories read-only over the otherwise-rw
+        workspace.
+
+        Each supplied --ro path points at a subdirectory of the mounted
+        workspace whose contents should be readable but not writable from the
+        container. Its real contents are bind-mounted read-only on top of the
+        read-write workspace mount.
+
+        Order matters, we need this ro mount to happen *after* the rw mount.
+
+        The respective container targets are recorded in
+        ``args.nested_ok_targets`` and exempt from the nested-mount warning --
+        since after all we are intentionally nesting mounts.
+        """
+        args = self.args
+        host_cwd = os.getcwd()
+        container_workspace = args.workspace_mount or host_cwd
+
+        if not hasattr(args, "nested_ok_targets"):
+            args.nested_ok_targets = set(getattr(args, "mask_targets", []))
+
+        if not args.ro:
+            return
+
+        for spec in args.ro:
+            host_path = Path(spec).expanduser()
+            if not host_path.is_absolute():
+                host_path = Path(host_cwd) / host_path
+            host_path = host_path.resolve()
+
+            if not self._is_path_inside_workspace(host_path, host_cwd):
+                fatal(
+                    f"--ro path '{spec}' must be inside the current working "
+                    f"directory ('{host_cwd}')."
+                )
+            if host_path == Path(host_cwd).resolve():
+                fatal(
+                    "--ro cannot cover the entire working directory "
+                    "(use --global-read-only)."
+                )
+            if not host_path.exists():
+                fatal(f"--ro path not found: {spec}")
+
+            rel = os.path.relpath(host_path, host_cwd)
+            container_target = str(PurePosixPath(container_workspace) / rel)
+            args.extra_mounts.append((str(host_path), container_target, True))
+            args.nested_ok_targets.add(container_target)
 
     def _is_path_inside_workspace(self, path, host_cwd):
         """Check if a path is inside the workspace directory."""
@@ -800,15 +850,25 @@ class Launcher:
         return normalized
 
     def _warn_nested_mounts(self, mounts):
-        """Warn when one container mount target nests inside another."""
+        """Warn when one container mount target nests inside another.
+
+        Mounts whose container target is an intentionally-nested target, from
+        --ro or --mask, are ignored since nesting is their whole purpose.
+        """
+        # --mask and --ro paths should have been added to self.nested_ok_targets
+        nested_ok = getattr(self.args, "nested_ok_targets", set())
         for index, (host_path, container_path, _) in enumerate(mounts):
             for other_host_path, other_container_path, _ in mounts[index + 1 :]:
+                # nested_container is (parent, child)
                 nested_container = self._nested_path_pair(
                     PurePosixPath(container_path),
                     PurePosixPath(other_container_path),
                 )
 
                 if not nested_container:
+                    continue
+
+                if nested_container[1] in nested_ok:
                     continue
 
                 LOGGER.warning(
@@ -1036,11 +1096,26 @@ def build_parser():
         ),
     )
     parser.add_argument(
-        "--read-only",
-        "--ro",
+        "--global-read-only",
+        dest="read_only",
         action="store_true",
         default=False,
-        help="Mount the current working directory as read-only inside the container",
+        help=(
+            "Mount the current working directory as read-only inside the container. "
+            "See --ro if you want to selectively set subdirectories to read-only."
+        ),
+    )
+    parser.add_argument(
+        "--ro",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help=(
+            "Protect a subdirectory of the working directory by re-mounting it "
+            "read-only on top of the read-write workspace. PATH is relative to "
+            "the current working directory (or an absolute path inside it). "
+            "Repeatable."
+        ),
     )
     parser.add_argument(
         "--mask",
