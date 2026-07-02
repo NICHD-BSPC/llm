@@ -77,6 +77,10 @@ Refreshes credentials locally, and optionally copies them to a remote host.
   :file:`~/.aws/credentials.json`. This is used by the ``llm-export`` profile
   via ``credential_process`` so containers can read live credentials without a
   restart; see :ref:`config-aws-export` for why this indirection exists.
+- Converts the OpenAI auth tokens in :file:`~/.codex.auth.json` to
+  a Pi-compatible format and stores in :file:`~/.pi/agent/auth.json` so that Pi
+  can use ChatGPT Enterprise within a container. This needs the
+  :ref:`auth-reload <pi-auth-reload>` extension installed.
 - Optionally pushes refreshed credentials to a remote host (such as NIH's Biowulf).
 - Optionally pushes entire config directories to remote.
 - Optionally prints Bedrock bearer-token exports for tools that do not use the AWS SDK.

@@ -1,6 +1,15 @@
 Changelog
 =========
 
+2026-07-01
+----------
+
+- Update docs on Pi
+- When running ``refresh.py``, also update the :file:`~/.pi/agent/auth.json`
+  with the contents of :file:`~/.codex/auth.json`
+- Add ``auth-reload`` extension for Pi to hot-reload ChatGPT
+  subscription/enterprise auth
+
 2026-06-28
 ----------
 

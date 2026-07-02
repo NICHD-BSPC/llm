@@ -95,3 +95,4 @@ Contents
    tips
    developer
    ai-disclosure
+   CHANGELOG
