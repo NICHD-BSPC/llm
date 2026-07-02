@@ -4,6 +4,8 @@ Changelog
 2026-07-01
 ----------
 
+- Add ``--mask`` flag to ``launch.py`` to hide sensitive subdirectories of the
+  working directory from the container
 - Update docs on Pi
 - When running ``refresh.py``, also update the :file:`~/.pi/agent/auth.json`
   with the contents of :file:`~/.codex/auth.json`

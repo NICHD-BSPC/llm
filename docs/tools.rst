@@ -270,6 +270,18 @@ modify your files:
 
    launch.py --read-only codex
 
+Hide a sensitive subdirectory of the working directory from the container. The
+rest of the working directory is mounted as usual, but the masked path is
+shadowed by an empty, read-only directory so its contents are not visible
+inside the container:
+
+.. code-block:: bash
+
+   launch.py --mask secrets codex
+
+``--mask`` takes a path relative to the current working directory (or an
+absolute path inside it) and may be repeated to mask several subdirectories.
+
 To keep a default set of extra mounts, put them in
 ``LLM_DEVCONTAINER_MOUNTS`` as a shell-style (space-separated) list:
 
