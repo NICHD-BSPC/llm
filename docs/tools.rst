@@ -187,6 +187,8 @@ container.
 
 See :doc:`config-files` for what those files and directories contain.
 
+.. _launchexamples:
+
 Example usage
 ~~~~~~~~~~~~~
 

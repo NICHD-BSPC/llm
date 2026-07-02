@@ -5,6 +5,11 @@ Tips
 
 A collection of tips and guidance in no particular order:
 
+- Start small. It is easy to let LLMs generate an enormous amount of content,
+  and when that happens it is natural to either feel lazy and accept without
+  review (which can be dangerous), or to feel overwhelmed at the amount of work
+  you need to do to review (which can be exhausting). 
+
 - Be disciplined about using git. Ideally, everything should be committed before
   starting an agent, otherwise it can be hard to incrementally roll back
   changes.
@@ -35,9 +40,3 @@ A collection of tips and guidance in no particular order:
   prevent agents from looking through the hundreds of thousands of files in
   a typical env. See :ref:`ts-conda` for related container issues with conda
   environments.
-
-- If you are giving the agent access to a conda env, and you have data in your
-  working directory, consider making a *complete copy* of the directory to work
-  in and give the agent access to that copy. When done, commit any changes to
-  git, and port them over to the original directory. This avoids problematic
-  situations like the agent running a command that changes data.

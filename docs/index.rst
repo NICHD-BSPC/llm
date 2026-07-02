@@ -9,38 +9,75 @@ Specifically, we wanted to run them in isolated containers (Docker/Podman,
 Singularity) to prevent agents from seeing arbitrary directories on
 the system. See :ref:`why-containers` for more on this topic.
 
-There was nothing available for our particular requirements, so this repo now supports:
+There was nothing available for our particular requirements, so this repo now
+supports multiple agent harnesses, multiple container runtimes, and the tooling
+to easily use them.
 
-**Multiple agent harnesses** depending on your preferences:
+Multiple agent harnesses
+------------------------
+
+This supports multiple harnesses that you can use depending on your preferences:
 
 - `Codex CLI <https://developers.openai.com/codex/cli>`__, using models hosted by OpenAI enterprise using `ChatGPT Enterprise <https://openai.com/chatgpt/enterprise/>`__ authentication
 - `Claude Code CLI <https://code.claude.com/docs/en/overview>`__, using models hosted by `Amazon Bedrock <https://aws.amazon.com/bedrock/>`__ using `AWS SSO <https://aws.amazon.com/iam/identity-center/>`__
 - `Pi coding agent <https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent>`__, also using models hosted by Amazon Bedrock using AWS SSO.
 
-**Multiple container runtimes** for different systems:
+Multiple container runtimes
+---------------------------
+
+Different systems use different runtimes for containers:
 
 - `Podman <https://podman.io/>`__ images, for running containers on a local Mac
 - `Singularity <https://docs.sylabs.io/guides/latest/user-guide/>`__ images, for running containers on a Linux HPC system
 
-**Tools** to make it as easy as possible to authenticate and launch while still remaining secure:
+Tools
+-----
 
-- ``refresh.py`` to refresh your credentials and optionally push them to a remote system
-- ``launch.py`` to launch a container running the LLM tool
-- ``build.py`` to build container images (only required if you want to build your own; you can use our hosted images)
+The tools here make it as easy as possible to authenticate and launch while still remaining secure:
 
-**Additional features**
+- :ref:`refresh` to refresh your credentials and optionally push them to a remote system
+- :ref:`launch` to launch a container running the LLM tool
+- :ref:`build` to build container images (only if you want to build your own, otherwise you can use our hosted images)
 
+Additional features
+-------------------
+
+- Control over exactly what is seen inside a container (mask directories
+  entirely; selectively set some to read-only)
 - Handle enterprise SSL/TLS interception
-- Mount existing conda environments and prepend them to the PATH so agents can use them
+- Mount existing conda environments and prepend them to the PATH so agents can
+  use them
+
+Example usage
+-------------
 
 When everything is set up, usage looks like this:
 
 .. code-block:: bash
 
-   refresh.py        # refresh credentials if needed
-   launch.py codex   # run Codex in a container
-   launch.py claude  # or Claude Code
-   launch.py pi      # or pi
+   # refresh credentials if needed
+   refresh.py
+
+   # Run Codex in a container, letting it see *only* the current working
+   # directory and required config files:
+   launch.py codex
+
+   # Mount the current working directory, make the data subdirectory read-only, 
+   # mount a metadata directory from elsewhere as read-only,
+   # mount a conda environment and add it to  the path so the container can use it
+   # and hide the manuscript directory completely
+   launch.py \
+     --ro ./data \
+     --mount /project/metadata:ro \
+     --conda-env ./env \
+     --mask manuscript \
+     codex
+
+   # Or use Claude Code
+   launch.py claude
+
+   # Or use Pi
+   launch.py pi
 
 Or, to use on a remote machine:
 
@@ -53,7 +90,7 @@ Or, to use on a remote machine:
    # then log in to the remote host and run:
    launch.py codex  # or claude or pi
 
-**See** https://nichd-bspc.github.io/llm **for documentation.**
+See :ref:`launchexamples` for more examples.
 
 **See** https://github.com/nichd-bspc/llm **for code.**
 
