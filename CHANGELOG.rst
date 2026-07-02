@@ -1,6 +1,25 @@
 Changelog
 =========
 
+2026-07-02
+----------
+
+- Add ``--ro`` flag to ``launch.py`` to protect subdirectories of the working
+  directory and make them read-only
+- Rename original ``--read-only``, which made the *entire* working directory
+  read-only, to ``--global-read-only``.
+
+2026-07-01
+----------
+
+- Add ``--mask`` flag to ``launch.py`` to hide sensitive subdirectories of the
+  working directory from the container
+- Update docs on Pi
+- When running ``refresh.py``, also update the :file:`~/.pi/agent/auth.json`
+  with the contents of :file:`~/.codex/auth.json`
+- Add ``auth-reload`` extension for Pi to hot-reload ChatGPT
+  subscription/enterprise auth
+
 2026-06-28
 ----------
 
