@@ -34,7 +34,10 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl podman skopeo
+          # qemu-user-static + binfmt-support register the binfmt handlers that
+          # let podman build the linux/arm64 image via emulation on this amd64
+          # runner.
+          sudo apt-get install -y curl podman skopeo qemu-user-static binfmt-support
 
       - name: Install Apptainer
         run: |
@@ -93,6 +96,13 @@ jobs:
             exit 1
           fi
 
+      - name: Build arm64 Podman image
+        run: |
+          python3 build.py \
+            --arch linux/arm64 \
+            --image-name "${PODMAN_IMAGE_NAME}-arm64" \
+            --repository-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+
       - name: Log in to GitHub Container Registry for Podman
         if: github.event_name != 'pull_request'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login "${{ env.REGISTRY }}" -u "${{ github.actor }}" --password-stdin
@@ -104,16 +114,21 @@ jobs:
           image_base="${{ env.REGISTRY }}/${repo_lc}"
           sha_tag="sha-${GITHUB_SHA}"
 
-          # Push image once under the sha tag to establish the digest
-          podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:${sha_tag}"
-          podman push "${image_base}:${sha_tag}"
+          # Combine the native amd64 and emulated arm64 builds into a single
+          # multi-arch manifest and push it once under the sha tag to establish
+          # the digest.
+          manifest="llm-manifest:${sha_tag}"
+          podman manifest create "${manifest}"
+          podman manifest add "${manifest}" "containers-storage:${PODMAN_IMAGE_NAME}"
+          podman manifest add "${manifest}" "containers-storage:${PODMAN_IMAGE_NAME}-arm64"
+          podman manifest push --all "${manifest}" "docker://${image_base}:${sha_tag}"
 
           # Publish each harness's "<harness>-<version>" tag and move its
           # per-harness "<harness>-latest" tag. The version tag is only pushed
-          # when it does not already exist, so the digest behind
-          # "<harness>-latest" stays stable across daily rebuilds whenever that
-          # harness's version is unchanged. This avoids forcing users to pull a
-          # fresh image every day when their harness hasn't actually changed.
+          # when it does not already exist. This way, the digest behind
+          # "<harness>-latest" stays stable across daily rebuilds but that
+          # harness's version is unchanged. This avoids forcing users to pull
+          # a fresh image every day when their harness hasn't actually changed.
           publish_harness_tags() {
             harness="$1"
             version="$2"
