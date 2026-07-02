@@ -2,36 +2,55 @@ Getting started: Pi
 ===================
 
 `Pi <https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent>`__ is
-a minimal coding harness. Unlike Codex and Claude Code, which are closely tied
-to OpenAI and Anthropic respectively, Pi is agnostic to model.
+a minimal coding harness. Codex and Claude Code are closely tied to OpenAI and
+Anthropic respectively. In contrast, Pi is agnostic to model. It is also much
+more flexible than Codex or Claude Code.
 
-Like Claude Code, Pi can use Amazon Bedrock. So if you have already completed
-:doc:`getting-started-claude`, then you're most of the way set up to use Pi.
+**Prerequisites:** Here we assume that you can successfully run :cmd:`launch.py
+codex` and :cmd:`launch.py claude` as documented at
+:doc:`getting-started-codex` and :doc:`getting-started-claude` respectively.
 
-The one thing you should add, for using Bedrock, is to export the
-``PI_USE_BEDROCK`` environment variable:
+
+.. note::
+
+   :nih:`NIH-specific` When choosing different Bedrock models, you'll need to
+   choose ones that start with ``us.``.
+
+Step 1. Export env var
+----------------------
+Export the ``PI_USE_BEDROCK`` environment variable, for example in your :file:`.bashrc`:
 
 .. code-block:: bash
 
    export PI_USE_BEDROCK=1
 
-Then run like this:
+The other env vars you have set for Claude Code and the AWS SSO setup, as part
+of the prerequisites, are used for Pi as well.
 
-.. code-block:: bash
+.. _pi-auth-reload:
 
-   launch.py pi
+Step 2 (optional). Install auth-refresh extension
+-------------------------------------------------
 
-On remote systems where Pi has trouble with proxy-driven AWS auth, use exported
-session credentials:
+If you want to use OpenAI models in Pi via the ChatGPT Enterprise login and
+want to avoid the need to restart Pi if auth expires when you are mid-session:
 
-.. code-block:: bash
+Copy the :file:`tools/reload-auth.ts` file from this repo into your
+:file:`~/.pi/agents/extensions` directory.
 
-   # local machine
-   refresh.py --remote your.remote.host
+Restart Pi. When using :cmd:`/model`, models will be available with the
+``[openai-codex]`` tag.
 
-   # remote shell
-   launch.py pi
+.. details:: What does this do?
 
-See :doc:`tools` for additional :ref:`launch` options (extra mounts,
-certificates, dry-run, etc.) and :doc:`aws-sso` for the full SSO setup if
-you have not already completed it as part of :doc:`getting-started-claude`.
+   When you run :ref:`refresh`, it will convert the Codex-generated
+   :file:`~/.codex/auth.json` into a format that Pi can use, and saves it as
+   :file:`~/.pi/agent/auth.json`. That gets mounted into the container.
+
+   However, unlike Codex, the Pi harness reads this file once at startup and
+   then does not read it again. That means if your auth expires when you're
+   mid-session, there's no way of refreshing it.
+
+   So this Pi extension provides a mechanism to do so. It hooks into the
+   ``before_agent_start`` and ``turn_start`` events, checks to see if the file
+   has been modified, and if so, read in the contents to refresh the auth.

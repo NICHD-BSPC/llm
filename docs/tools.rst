@@ -77,6 +77,10 @@ Refreshes credentials locally, and optionally copies them to a remote host.
   :file:`~/.aws/credentials.json`. This is used by the ``llm-export`` profile
   via ``credential_process`` so containers can read live credentials without a
   restart; see :ref:`config-aws-export` for why this indirection exists.
+- Converts the OpenAI auth tokens in :file:`~/.codex.auth.json` to
+  a Pi-compatible format and stores in :file:`~/.pi/agent/auth.json` so that Pi
+  can use ChatGPT Enterprise within a container. This needs the
+  :ref:`auth-reload <pi-auth-reload>` extension installed.
 - Optionally pushes refreshed credentials to a remote host (such as NIH's Biowulf).
 - Optionally pushes entire config directories to remote.
 - Optionally prints Bedrock bearer-token exports for tools that do not use the AWS SDK.
@@ -264,7 +268,30 @@ modify your files:
 
 .. code-block:: bash
 
-   launch.py --read-only codex
+   launch.py --global-read-only codex
+
+Keep the working directory writable but protect a single subdirectory. The
+``--ro`` path is re-mounted read-only on top of the read-write workspace, so its
+contents remain readable but cannot be modified:
+
+.. code-block:: bash
+
+   launch.py --ro data codex
+
+``--ro`` takes a path relative to the current working directory (or an absolute
+path inside it) and may be repeated to protect several subdirectories.
+
+Hide a sensitive subdirectory of the working directory from the container. The
+rest of the working directory is mounted as usual, but the masked path is
+shadowed by an empty, read-only directory so its contents are not visible
+inside the container:
+
+.. code-block:: bash
+
+   launch.py --mask secrets codex
+
+``--mask`` takes a path relative to the current working directory (or an
+absolute path inside it) and may be repeated to mask several subdirectories.
 
 To keep a default set of extra mounts, put them in
 ``LLM_DEVCONTAINER_MOUNTS`` as a shell-style (space-separated) list:

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import base64
 from datetime import datetime, timedelta, timezone
 import json
 import getpass
@@ -53,7 +54,9 @@ CREDENTIAL_PATHS = {
         ),
     },
     "pi": {
-        "auth": ("~/.aws/config", "~/.aws/credentials.json"),
+        # Include auth.json to support ChatGPT Enterprise login, where we
+        # convert the codex login auth.json into something that Pi can use
+        "auth": ("~/.pi/agent/auth.json", "~/.aws/config", "~/.aws/credentials.json"),
         "config": ("~/.pi/agent/settings.json",),
         "full": (
             "~/.pi/agent/skills",
@@ -158,6 +161,89 @@ def refresh_codex():
     else:
         LOGGER.warning("Codex: not logged in (%r), running codex login...", output)
         subprocess.run(["codex", "login"], check=True)
+
+
+def decode_jwt_payload(jwt):
+    """Decode the payload portion of a JWT token without verifying it."""
+    try:
+        parts = jwt.split(".")
+        if len(parts) < 2:
+            return None
+        payload = parts[1].replace("-", "+").replace("_", "/")
+        padding = 4 - len(payload) % 4
+        if padding != 4:
+            payload += "=" * padding
+        decoded = base64.b64decode(payload).decode("utf-8")
+        return json.loads(decoded)
+    except Exception:
+        return None
+
+
+def convert_codex_auth_to_pi(src, dest):
+    """
+    Upsert Codex OAuth credentials into Pi auth.json.
+
+    Pi auth.json may contain credentials for many providers, so this function
+    preserves the existing top-level object and only updates the openai-codex
+    entry. If an existing Pi auth file is malformed, fail instead of replacing
+    unrelated credentials.
+    """
+    with open(src, "r") as f:
+        codex = json.load(f)
+
+    tokens = codex.get("tokens")
+    if not tokens:
+        raise ValueError("No 'tokens' key found in Codex auth.json")
+
+    access = tokens.get("access_token")
+    refresh = tokens.get("refresh_token")
+    account_id = tokens.get("account_id")
+
+    if not access or not refresh:
+        raise ValueError(
+            "Could not find access_token and refresh_token in Codex auth.json"
+        )
+
+    jwt = decode_jwt_payload(access)
+    expires = jwt.get("exp", 0) * 1000 if jwt else 0
+
+    pi_data = {}
+    if dest.exists():
+        try:
+            with open(dest, "r") as f:
+                pi_data = json.load(f)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Existing Pi auth.json is invalid JSON: {dest}") from exc
+        if not isinstance(pi_data, dict):
+            raise ValueError(f"Existing Pi auth.json must contain a JSON object: {dest}")
+
+    pi_data["openai-codex"] = {
+        "type": "oauth",
+        "access": access,
+        "refresh": refresh,
+        "expires": expires,
+    }
+    if account_id:
+        pi_data["openai-codex"]["accountId"] = account_id
+
+    dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = dest.with_name(f".{dest.name}.tmp")
+    with open(tmp, "w") as f:
+        json.dump(pi_data, f, indent=2)
+        f.write("\n")
+
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, dest)
+
+
+def update_pi_codex_auth():
+    """Upsert Codex OAuth credentials into Pi auth.json."""
+    src = Path(os.environ.get("CODEX_AUTH_PATH", Path.home() / ".codex" / "auth.json"))
+    dest = Path(
+        os.environ.get("PI_AUTH_PATH", Path.home() / ".pi" / "agent" / "auth.json")
+    )
+    convert_codex_auth_to_pi(src, dest)
+    LOGGER.info("Updated Pi Codex auth at %s", dest)
 
 
 def aws_credential_expiration() -> Optional[str]:
@@ -388,8 +474,9 @@ def main() -> int:
         refresh_aws_sso()
         if not args.no_export_creds:
             export_aws_profile()
-    if args.kind in ("all", "codex"):
+    if args.kind in ("all", "codex", "pi"):
         refresh_codex()
+        update_pi_codex_auth()
     if args.kind == "bedrock":
         try:
             refresh_aws_sso()
