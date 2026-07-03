@@ -1042,7 +1042,11 @@ def build_parser():
     )
     parser.add_argument(
         "--arch",
-        default="linux/amd64",
+        default=(
+            "linux/arm64"
+            if platform.machine().lower() in ("arm64", "aarch64")
+            else "linux/amd64"
+        ),
         help="Container platform for podman (default: %(default)s, needs to match arch given to build.py)",
     )
     parser.add_argument(

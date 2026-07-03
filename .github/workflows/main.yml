@@ -16,8 +16,20 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+  # Build (and test) each architecture natively on a matching runner. arm64
+  # uses GitHub's native arm64 runner so it builds at native speed instead of
+  # under qemu emulation. On push/schedule each leg pushes a per-arch sha tag
+  # that the publish-manifest job below stitches into a multi-arch manifest.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
@@ -36,7 +48,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl podman skopeo
 
+      # Apptainer/Singularity is only built and published for amd64
       - name: Install Apptainer
+        if: matrix.arch == 'amd64'
         run: |
           curl -fsSL \
             -o /tmp/apptainer.deb \
@@ -47,11 +61,12 @@ jobs:
       - name: Build Podman image
         run: |
           python3 build.py \
-            --arch linux/amd64 \
+            --arch "linux/${{ matrix.arch }}" \
             --image-name "${PODMAN_IMAGE_NAME}" \
             --repository-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
 
       - name: Resolve installed tool versions
+        if: matrix.arch == 'amd64'
         run: |
           claude_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" claude --version | sed -E 's/^([0-9][^ ]*).*/\1/')"
           codex_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" codex --version | awk '{print $2}')"
@@ -71,7 +86,7 @@ jobs:
 
           run_diagnostics() {
             # launch.py uses `-it` when running the container, but this test is
-          # not running in a TTY. So we fake one with `script`.
+            # not running in a TTY. So we fake one with `script`.
             script -q -e -c "$1" /dev/null 2>&1 | tee -a "$log_file"
             status=${PIPESTATUS[0]}
             if [ "$status" -ne 0 ]; then
@@ -97,55 +112,20 @@ jobs:
         if: github.event_name != 'pull_request'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login "${{ env.REGISTRY }}" -u "${{ github.actor }}" --password-stdin
 
-      - name: Push Podman image to GitHub Container Registry
+      # Push this architecture under a temporary per-arch sha tag. The
+      # publish-manifest job will combine these into the final multi-arch manifest.
+      - name: Push per-arch Podman image
         if: github.event_name != 'pull_request'
         run: |
+          # ensure the registry is lowercase
           repo_lc="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           image_base="${{ env.REGISTRY }}/${repo_lc}"
-          sha_tag="sha-${GITHUB_SHA}"
-
-          # Push image once under the sha tag to establish the digest
-          podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:${sha_tag}"
-          podman push "${image_base}:${sha_tag}"
-
-          # Publish each harness's "<harness>-<version>" tag and move its
-          # per-harness "<harness>-latest" tag. The version tag is only pushed
-          # when it does not already exist, so the digest behind
-          # "<harness>-latest" stays stable across daily rebuilds whenever that
-          # harness's version is unchanged. This avoids forcing users to pull a
-          # fresh image every day when their harness hasn't actually changed.
-          publish_harness_tags() {
-            harness="$1"
-            version="$2"
-            version_tag="${harness}-${version}"
-            latest_tag="${harness}-latest"
-            if skopeo inspect --raw "docker://${image_base}:${version_tag}" >/dev/null 2>&1; then
-              echo "Version tag ${version_tag} already exists; reusing its digest for ${latest_tag}"
-              source_ref="${image_base}:${version_tag}"
-            else
-              echo "Publishing new version tag ${version_tag}"
-              skopeo copy --all \
-                "docker://${image_base}:${sha_tag}" \
-                "docker://${image_base}:${version_tag}"
-              source_ref="${image_base}:${sha_tag}"
-            fi
-            skopeo copy --all \
-              "docker://${source_ref}" \
-              "docker://${image_base}:${latest_tag}"
-          }
-
-          publish_harness_tags claude "${CLAUDE_VERSION}"
-          publish_harness_tags codex "${CODEX_VERSION}"
-          publish_harness_tags pi "${PI_VERSION}"
-
-          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            skopeo copy --all \
-              "docker://${image_base}:${sha_tag}" \
-              "docker://${image_base}:latest"
-          fi
-
+          arch_tag="sha-${GITHUB_SHA}-${{ matrix.arch }}"
+          podman tag "${PODMAN_IMAGE_NAME}" "${image_base}:${arch_tag}"
+          podman push "${image_base}:${arch_tag}"
 
       - name: Export Podman image as docker archive
+        if: matrix.arch == 'amd64'
         run: |
           podman save \
             -o llm-image.tar \
@@ -153,13 +133,16 @@ jobs:
             "${PODMAN_IMAGE_NAME}"
 
       - name: Build Singularity image from docker archive
+        if: matrix.arch == 'amd64'
         run: |
           apptainer build "${SINGULARITY_SIF_PATH}" "docker-archive:$(pwd)/llm-image.tar"
 
       - name: Verify Singularity artifact exists
+        if: matrix.arch == 'amd64'
         run: test -f "${SINGULARITY_SIF_PATH}"
 
       - name: Run Singularity shell diagnostics
+        if: matrix.arch == 'amd64'
         run: |
           set -o pipefail
           log_file="$(mktemp)"
@@ -184,11 +167,11 @@ jobs:
           fi
 
       - name: Log in to GitHub Container Registry for Apptainer
-        if: github.event_name != 'pull_request'
+        if: matrix.arch == 'amd64' && github.event_name != 'pull_request'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | apptainer registry login --username "${{ github.actor }}" --password-stdin "docker://${{ env.REGISTRY }}"
 
       - name: Push Singularity SIF to GitHub Container Registry
-        if: github.event_name != 'pull_request'
+        if: matrix.arch == 'amd64' && github.event_name != 'pull_request'
         run: |
           repo_lc="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           registry_base="${{ env.REGISTRY }}/${repo_lc}-sif"
@@ -232,3 +215,96 @@ jobs:
               "docker://${registry_base}:${sha_tag}" \
               "docker://${registry_base}:latest"
           fi
+
+  # Combine the per-arch images pushed by the build matrix into a single
+  # multi-arch manifest and publish the human-readable tags.
+  publish-manifest:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman skopeo
+
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login "${{ env.REGISTRY }}" -u "${{ github.actor }}" --password-stdin
+
+      - name: Publish multi-arch manifest and tags
+        run: |
+          repo_lc="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          image_base="${{ env.REGISTRY }}/${repo_lc}"
+          sha_tag="sha-${GITHUB_SHA}"
+
+          # Stitch the per-arch sha tags into one multi-arch manifest, pushed
+          # under the canonical sha tag to establish the digest. Consumers
+          # (including Macs) then pull the variant matching their architecture.
+          manifest="llm-manifest:${sha_tag}"
+          podman manifest create "${manifest}"
+          podman manifest add "${manifest}" "docker://${image_base}:${sha_tag}-amd64"
+          podman manifest add "${manifest}" "docker://${image_base}:${sha_tag}-arm64"
+          podman manifest push --all "${manifest}" "docker://${image_base}:${sha_tag}"
+
+          # Resolve tool versions from the (native amd64) image we just built.
+          amd64_ref="${image_base}:${sha_tag}-amd64"
+          CLAUDE_VERSION="$(podman run --rm "${amd64_ref}" claude --version | sed -E 's/^([0-9][^ ]*).*/\1/')"
+          CODEX_VERSION="$(podman run --rm "${amd64_ref}" codex --version | awk '{print $2}')"
+          PI_VERSION="$(podman run --rm "${amd64_ref}" pi --version 2>&1 | tr -d '\r')"
+
+          # Publish each harness's "<harness>-<version>" tag and move its
+          # per-harness "<harness>-latest" tag. The version tag is only pushed
+          # when it does not already exist. This way, the digest behind
+          # "<harness>-latest" stays stable across daily rebuilds when that
+          # harness's version is unchanged. This avoids forcing users to pull
+          # a fresh image every day when their harness hasn't actually changed.
+          # All copies use "--all" so every tag carries both architectures.
+          publish_harness_tags() {
+            harness="$1"
+            version="$2"
+            version_tag="${harness}-${version}"
+            latest_tag="${harness}-latest"
+            if skopeo inspect --raw "docker://${image_base}:${version_tag}" >/dev/null 2>&1; then
+              echo "Version tag ${version_tag} already exists; reusing its digest for ${latest_tag}"
+              source_ref="${image_base}:${version_tag}"
+            else
+              echo "Publishing new version tag ${version_tag}"
+              skopeo copy --all \
+                "docker://${image_base}:${sha_tag}" \
+                "docker://${image_base}:${version_tag}"
+              source_ref="${image_base}:${sha_tag}"
+            fi
+            skopeo copy --all \
+              "docker://${source_ref}" \
+              "docker://${image_base}:${latest_tag}"
+          }
+
+          publish_harness_tags claude "${CLAUDE_VERSION}"
+          publish_harness_tags codex "${CODEX_VERSION}"
+          publish_harness_tags pi "${PI_VERSION}"
+
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            skopeo copy --all \
+              "docker://${image_base}:${sha_tag}" \
+              "docker://${image_base}:latest"
+          fi
+
+      # The per-arch sha tags are only used for building the manifest above.
+      # The manifest references the underlying images by digest (not by these
+      # tags), so deleting the tags is safe and keeps the package's tag list
+      # clean.
+      - name: Clean up temporary per-arch tags
+        if: always()
+        run: |
+          repo_lc="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          image_base="${{ env.REGISTRY }}/${repo_lc}"
+          sha_tag="sha-${GITHUB_SHA}"
+          for arch in amd64 arm64; do
+            ref="docker://${image_base}:${sha_tag}-${arch}"
+            echo "Deleting ${ref}"
+            skopeo delete "${ref}" || echo "warning: could not delete ${ref}"
+          done

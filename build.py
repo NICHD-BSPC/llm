@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import platform
 import shlex
 import subprocess
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
 IMAGE_NAME = "localhost/llm-devcontainer:latest"
-ARCH = "linux/amd64"
+ARCH = "linux/arm64" if platform.machine().lower() in ("arm64", "aarch64") else "linux/amd64"
 CONTAINER_USERNAME = "devuser"
 DEFAULT_REPOSITORY_URL = "https://github.com/nichd-bspc/llm"
 
