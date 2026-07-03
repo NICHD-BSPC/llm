@@ -1,6 +1,11 @@
 Changelog
 =========
 
+2026-07-03
+----------
+
+- Build arm64 containers for better performance on macOS Podman
+
 2026-07-02
 ----------
 
