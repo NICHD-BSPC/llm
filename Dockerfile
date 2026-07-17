@@ -120,7 +120,9 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   npm i -g @openai/codex && \
   \
   # Pi installation from official docs \
-  npm install -g @earendil-works/pi-coding-agent
+  npm install -g @earendil-works/pi-coding-agent && \
+  # Clean up npm cache
+  rm -r ~/.npm
 
 
 RUN mkdir -p \
