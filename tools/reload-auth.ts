@@ -48,39 +48,88 @@ function formatError(error: unknown): string {
 }
 
 /**
+ * Minimal shape of the credential store we reach through the runtime.
+ * ModelRegistry is a synchronous facade over a private ModelRuntime; the
+ * underlying pi-ai CredentialStore is what actually caches auth.json in
+ * memory, so it's the thing that needs reload() to observe external edits.
+ */
+type CredentialStoreish = {
+	reload?: () => void;
+	store?: {
+		reload?: () => void;
+	};
+	list?: () => Promise<ReadonlyArray<{ providerId: string }>>;
+};
+
+type Runtimeish = {
+	credentials?: CredentialStoreish;
+	listCredentials?: () => Promise<ReadonlyArray<{ providerId: string }>>;
+};
+
+/**
+ * ModelRegistry keeps its ModelRuntime private, but the runtime owns the
+ * credential store we need to reload. Reach it defensively so that an API
+ * shape change degrades to "refresh only" instead of throwing.
+ */
+function getRuntime(ctx: ExtensionContext): Runtimeish | undefined {
+	const runtime = (ctx.modelRegistry as unknown as { runtime?: Runtimeish }).runtime;
+	return runtime ?? undefined;
+}
+
+/**
+ * List provider IDs currently held in the runtime's in-memory credential store.
+ */
+async function listProviders(runtime: Runtimeish | undefined): Promise<string[]> {
+	try {
+		const list = runtime?.listCredentials ?? runtime?.credentials?.list;
+		if (!list) return [];
+		const entries = await list.call(runtime?.listCredentials ? runtime : runtime?.credentials);
+		return entries.map((entry) => entry.providerId).sort();
+	} catch {
+		return [];
+	}
+}
+
+/**
  * Reload the auth.json file, keeping track of what changed.
  */
-function reloadAuth(ctx: ExtensionContext, signature = getAuthFileSignature()): ReloadResult {
-	// AuthStorage handles loading, parsing, and error handling.
-	// (We're only using AUTH_PATH above for checking if the file changed)
-	const authStorage = ctx.modelRegistry.authStorage;
+async function reloadAuth(ctx: ExtensionContext, signature = getAuthFileSignature()): Promise<ReloadResult> {
+	const runtime = getRuntime(ctx);
+	const errors: string[] = [];
 
-	// What we currently have in auth storage, will be reported to user
-	const providersBefore = authStorage.list().sort();
+	// What we currently have in the in-memory credential store, reported to user.
+	const providersBefore = await listProviders(runtime);
 
-	// Re-read ~/.pi/agent/auth.json into the in-memory AuthStorage instance.
-	// If auth.json is invalid JSON, AuthStorage keeps the previous in-memory data
-	// and records an error; report that through /auth-reload.
-	authStorage.reload();
+	// Re-read ~/.pi/agent/auth.json into the runtime's in-memory credential store.
+	// RuntimeCredentials is just an overlay; the actual cached auth.json lives on
+	// its underlying store.
+	try {
+		runtime?.credentials?.reload?.();
+		runtime?.credentials?.store?.reload?.();
+	} catch (error) {
+		errors.push(formatError(error));
+	}
 
 	// Rebuild model availability and OAuth-derived model metadata from the
-	// freshly loaded credentials. E.g., if the updated auth.json has a new
-	// provider, we want that to show up in the choices for /model.
-	ctx.modelRegistry.refresh();
+	// freshly loaded credentials. refresh() is async in this pi version.
+	try {
+		await ctx.modelRegistry.refresh();
+	} catch (error) {
+		errors.push(formatError(error));
+	}
 
-	// What we have now after reloading, again to report to user
-	const providersAfter = authStorage.list().sort();
-	const errors = authStorage.drainErrors().map(formatError);
+	// What we have now after reloading, again to report to user.
+	const providersAfter = await listProviders(runtime);
 	const modelsError = ctx.modelRegistry.getError();
 
 	lastSeenAuthFile = signature;
 	return { providersBefore, providersAfter, errors, modelsError };
 }
 
-function reloadAuthIfChanged(ctx: ExtensionContext): void {
+async function reloadAuthIfChanged(ctx: ExtensionContext): Promise<void> {
 	const signature = getAuthFileSignature();
 	if (lastSeenAuthFile !== signature) {
-		reloadAuth(ctx, signature);
+		await reloadAuth(ctx, signature);
 	}
 }
 
@@ -101,7 +150,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("auth-reload", {
 		description: "Reload ~/.pi/agent/auth.json without restarting pi",
 		handler: async (_args, ctx) => {
-			const result = reloadAuth(ctx);
+			const result = await reloadAuth(ctx);
 			ctx.ui.notify(summarize(result), result.errors.length || result.modelsError ? "warning" : "info");
 		},
 	});
@@ -116,13 +165,13 @@ export default function (pi: ExtensionAPI) {
 	// before_agent_start triggers after the user submits a prompt and
 	// before the agent starts its loop.
 	pi.on("before_agent_start", async (_event, ctx) => {
-		reloadAuthIfChanged(ctx);
+		await reloadAuthIfChanged(ctx);
 	});
 
 	// We want to also refresh when an agent is in the middle of a loop
 	// (e.g., calling tools), so we use turn_start as well, which is
 	// *every* model turn.
 	pi.on("turn_start", async (_event, ctx) => {
-		reloadAuthIfChanged(ctx);
+		await reloadAuthIfChanged(ctx);
 	});
 }
