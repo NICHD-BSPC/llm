@@ -981,6 +981,8 @@ class Launcher:
                 self.setup_claude_config()
             if args.cmd in {"pi", "shell"}:
                 self.setup_pi_config()
+            if args.cmd in {"codex", "shell"}:
+                self.setup_codex_config()
             self.backend.check_availability()
             self.backend.validate_image()
 
