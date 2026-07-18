@@ -253,22 +253,20 @@ class PodmanBackend(Backend):
 
     def build_command(self, env_vars, mounts, command_args):
         args = self.args
-        uid = os.getuid()
 
         env_args = self.build_env_args(env_vars)
         mount_args = self.build_mount_args(mounts)
         mask_args = self.build_mask_args(getattr(args, "mask_targets", []))
 
-        # On CI platforms like GitHub Actions, podman runs rootless on a Linux
-        # host, so we don't have Podman Desktop to intercept and gracefully
-        # handle permssion issues.
-        if os.getenv("CI") == "true":
-            userns_arg = "--userns=keep-id:uid=1000,gid=1000"
-            user_arg = "--user=1000:1000"
-
-        else:
-            userns_arg = "--userns=keep-id"
-            user_arg = f"--user={uid}"
+        # The image bakes its home directory and dotfiles as UID/GID 1000
+        # (see USER_UID/USER_GID in the Dockerfile). Map the current host user
+        # onto that same 1000:1000 inside the user namespace and run as it, so
+        # the runtime user actually owns its home directory. Using the raw host
+        # UID here instead would leave the process unable to write to a home
+        # owned by 1000 whenever the host UID differs.This works both on
+        # rootless Linux (CI) and with Podman Desktop on macOS.
+        userns_arg = "--userns=keep-id:uid=1000,gid=1000"
+        user_arg = "--user=1000:1000"
 
         # fmt: off
         return [
