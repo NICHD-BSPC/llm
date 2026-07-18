@@ -428,7 +428,7 @@ class Launcher:
         codex_dir = Path.home() / ".codex"
         if not codex_dir.exists():
             codex_dir.mkdir(parents=True, exist_ok=True)
-            LOGGER.info("Created directory: %", codex_dir)
+            LOGGER.info("Created directory: %s", codex_dir)
 
     def setup_claude_config(self):
         """Create default ~/.claude.json and ~/.claude/ if needed to prevent Claude Code from hanging."""
