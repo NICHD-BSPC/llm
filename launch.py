@@ -711,19 +711,13 @@ class Launcher:
         """
         env = {}
 
-        https_lower = os.environ.get("https_proxy")
-        https_upper = os.environ.get("HTTPS_PROXY")
-        if https_lower or https_upper:
-            value = https_lower or https_upper
-            env["https_proxy"] = https_lower if https_lower else value
-            env["HTTPS_PROXY"] = https_upper if https_upper else value
-
-        http_lower = os.environ.get("http_proxy")
-        http_upper = os.environ.get("HTTP_PROXY")
-        if http_lower or http_upper:
-            value = http_lower or http_upper
-            env["http_proxy"] = http_lower if http_lower else value
-            env["HTTP_PROXY"] = http_upper if http_upper else value
+        for lower, upper in (("https_proxy", "HTTPS_PROXY"), ("http_proxy", "HTTP_PROXY")):
+            lower_val = os.environ.get(lower)
+            upper_val = os.environ.get(upper)
+            if lower_val or upper_val:
+                value = lower_val or upper_val
+                env[lower] = lower_val or value
+                env[upper] = upper_val or value
 
         return env
 
