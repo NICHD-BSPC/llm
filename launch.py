@@ -323,6 +323,7 @@ class SingularityBackend(Backend):
         #
         home = env_vars.pop("HOME")
         tmp = tempfile.mkdtemp()
+        atexit.register(shutil.rmtree, tmp, ignore_errors=True)
 
         env_args = self.build_env_args(env_vars)
 
