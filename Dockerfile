@@ -121,7 +121,7 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   \
   # Pi installation from official docs \
   npm install -g @earendil-works/pi-coding-agent && \
-  # Clean up npm cache
+  # Clean up npm cache \
   rm -r ~/.npm
 
 
