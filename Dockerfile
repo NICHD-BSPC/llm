@@ -6,6 +6,7 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 ARG DEBIAN_FRONTEND=noninteractive
 ARG NODE_VERSION=26.5.0
+ARG NPM_VERSION=12.0.1
 ARG CLAUDE_VERSION=
 ARG CODEX_VERSION=
 ARG PI_VERSION=
@@ -102,6 +103,9 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   echo "${EXPECTED_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
   tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner && \
   rm -f /tmp/SHASUMS256.txt /tmp/node.tar.xz && \
+  \
+  # Update npm to pinned version \
+  npm install -g npm@${NPM_VERSION} && \
   \
   # Install AWS CLI v2. \
   curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o /tmp/awscliv2.zip && \
