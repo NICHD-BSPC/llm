@@ -5,7 +5,8 @@ ARG USERNAME=devuser
 ARG USER_UID=1000
 ARG USER_GID=1000
 ARG DEBIAN_FRONTEND=noninteractive
-ARG NODE_VERSION=25.9.0
+ARG NODE_VERSION=26.5.0
+ARG NPM_VERSION=12.0.1
 ARG CLAUDE_VERSION=
 ARG CODEX_VERSION=
 ARG PI_VERSION=
@@ -19,7 +20,7 @@ LABEL org.opencontainers.image.source="${REPOSITORY_URL}" \
 # The following --mount... construct lets us pass in temporary secrets (here,
 # enterprise certs) at build time without letting them leak into the built
 # container
-RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
+RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem,mode=0444 \
     APT_HTTPS_OPTS="$(if [ -f /run/secrets/mitm_ca_bundle.pem ]; then printf '%s' '-o Acquire::https::CaInfo=/run/secrets/mitm_ca_bundle.pem'; fi)" && \
     apt-get ${APT_HTTPS_OPTS} update && \
     apt-get ${APT_HTTPS_OPTS} install -y --no-install-recommends \
@@ -85,7 +86,8 @@ ENV DEVCONTAINER=true \
     # Claude Code complains if this is not in the PATH \
     PATH="$PATH:/home/${USERNAME}/.local/bin"
 
-RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem \
+RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mitm_ca_bundle.pem,mode=0444 \
+  APT_HTTPS_OPTS="$(if [ -f /run/secrets/mitm_ca_bundle.pem ]; then printf '%s' '-o Acquire::https::CaInfo=/run/secrets/mitm_ca_bundle.pem'; fi)" && \
   export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}" && \
   if [ -f /run/secrets/mitm_ca_bundle.pem ]; then CURL_CA_BUNDLE=/run/secrets/mitm_ca_bundle.pem; fi && \
   export CURL_CA_BUNDLE && \
@@ -102,6 +104,9 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner && \
   rm -f /tmp/SHASUMS256.txt /tmp/node.tar.xz && \
   \
+  # Update npm to pinned version \
+  npm install -g npm@${NPM_VERSION} && \
+  \
   # Install AWS CLI v2. \
   curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o /tmp/awscliv2.zip && \
   cd /tmp && unzip -q awscliv2.zip && \
@@ -114,15 +119,16 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
     -o /etc/apt/keyrings/claude-code.asc && \
   echo "deb [signed-by=/etc/apt/keyrings/claude-code.asc] https://downloads.claude.ai/claude-code/apt/stable stable main" \
     | tee /etc/apt/sources.list.d/claude-code.list && \
-  apt update && apt install claude-code && \
+  apt-get ${APT_HTTPS_OPTS} update && apt-get ${APT_HTTPS_OPTS} install -y --no-install-recommends claude-code && \
   \
   # Codex installation from official docs \
   npm i -g @openai/codex && \
   \
   # Pi installation from official docs \
   npm install -g @earendil-works/pi-coding-agent && \
-  # Clean up npm cache
-  rm -r ~/.npm
+  \
+  # Clean up npm cache \
+  rm -r /home/${USERNAME}/.npm
 
 
 RUN mkdir -p \

@@ -253,22 +253,20 @@ class PodmanBackend(Backend):
 
     def build_command(self, env_vars, mounts, command_args):
         args = self.args
-        uid = os.getuid()
 
         env_args = self.build_env_args(env_vars)
         mount_args = self.build_mount_args(mounts)
         mask_args = self.build_mask_args(getattr(args, "mask_targets", []))
 
-        # On CI platforms like GitHub Actions, podman runs rootless on a Linux
-        # host, so we don't have Podman Desktop to intercept and gracefully
-        # handle permssion issues.
-        if os.getenv("CI") == "true":
-            userns_arg = "--userns=keep-id:uid=1000,gid=1000"
-            user_arg = "--user=1000:1000"
-
-        else:
-            userns_arg = "--userns=keep-id"
-            user_arg = f"--user={uid}"
+        # The image bakes its home directory and dotfiles as UID/GID 1000
+        # (see USER_UID/USER_GID in the Dockerfile). Map the current host user
+        # onto that same 1000:1000 inside the user namespace and run as it, so
+        # the runtime user actually owns its home directory. Using the raw host
+        # UID here instead would leave the process unable to write to a home
+        # owned by 1000 whenever the host UID differs.This works both on
+        # rootless Linux (CI) and with Podman Desktop on macOS.
+        userns_arg = "--userns=keep-id:uid=1000,gid=1000"
+        user_arg = "--user=1000:1000"
 
         # fmt: off
         return [
@@ -325,6 +323,7 @@ class SingularityBackend(Backend):
         #
         home = env_vars.pop("HOME")
         tmp = tempfile.mkdtemp()
+        atexit.register(shutil.rmtree, tmp, ignore_errors=True)
 
         env_args = self.build_env_args(env_vars)
 
@@ -429,7 +428,7 @@ class Launcher:
         codex_dir = Path.home() / ".codex"
         if not codex_dir.exists():
             codex_dir.mkdir(parents=True, exist_ok=True)
-            LOGGER.info("Created directory: %", codex_dir)
+            LOGGER.info("Created directory: %s", codex_dir)
 
     def setup_claude_config(self):
         """Create default ~/.claude.json and ~/.claude/ if needed to prevent Claude Code from hanging."""
@@ -712,19 +711,13 @@ class Launcher:
         """
         env = {}
 
-        https_lower = os.environ.get("https_proxy")
-        https_upper = os.environ.get("HTTPS_PROXY")
-        if https_lower or https_upper:
-            value = https_lower or https_upper
-            env["https_proxy"] = https_lower if https_lower else value
-            env["HTTPS_PROXY"] = https_upper if https_upper else value
-
-        http_lower = os.environ.get("http_proxy")
-        http_upper = os.environ.get("HTTP_PROXY")
-        if http_lower or http_upper:
-            value = http_lower or http_upper
-            env["http_proxy"] = http_lower if http_lower else value
-            env["HTTP_PROXY"] = http_upper if http_upper else value
+        for lower, upper in (("https_proxy", "HTTPS_PROXY"), ("http_proxy", "HTTP_PROXY")):
+            lower_val = os.environ.get(lower)
+            upper_val = os.environ.get(upper)
+            if lower_val or upper_val:
+                value = lower_val or upper_val
+                env[lower] = lower_val or value
+                env[upper] = upper_val or value
 
         return env
 
@@ -971,7 +964,6 @@ class Launcher:
             return shlex.split(value)
         except ValueError as exc:
             fatal(f"failed to parse ${env_var_name}: {exc}")
-            return []
 
     def run(self):
         """Main entry point for launching a container."""
@@ -982,6 +974,8 @@ class Launcher:
                 self.setup_claude_config()
             if args.cmd in {"pi", "shell"}:
                 self.setup_pi_config()
+            if args.cmd in {"codex", "shell"}:
+                self.setup_codex_config()
             self.backend.check_availability()
             self.backend.validate_image()
 

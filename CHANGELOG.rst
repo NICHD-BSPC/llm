@@ -1,6 +1,25 @@
 Changelog
 =========
 
+2026-07-18
+----------
+
+- Fix ``tools/reload-auth.ts`` pi extension to work with newer versions of pi
+- Fix permissions and UID/GID when running podman. Previously, if the host
+  user's UID was not 1000, then the container user's home directory would have
+  a mixture of permissions, some from the mounts (which we could write to) and
+  some baked into the image (which we couldn't). The main problem was that the
+  entire home dir was not writeable, causing things like pi extension
+  installation to fail because it couldn't write to the container's ``~/.npm``
+  dir.
+- In Dockerfile, bump ``nodejs`` version and pin ``npm`` version 
+- Fix claude installation in the container so it uses provided ``--certs`` when
+  on a network using TLS interception.
+- Clean up temp dir for singularity if used
+- Create empty codex dir if none exists
+- Code cleanup: streamline proxy handling; fix logger
+  message; rm unreachable code
+
 2026-07-03
 ----------
 
