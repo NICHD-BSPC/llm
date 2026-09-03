@@ -17,6 +17,8 @@ Overview of the flow:
 
 import argparse
 import atexit
+import configparser
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -28,7 +30,11 @@ import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 
-
+# These vars deal with default paths and env vars. "Managed" refers to the
+# directory and credentials that are created for the sole purpose of mounting
+# read-only into a container.
+#
+# Profile that will be created
 AWS_EXPORT_PROFILE = "llm-export"
 AWS_CREDENTIALS_JSON = Path.home() / ".aws" / "credentials.json"
 AWS_STATIC_CREDENTIAL_ENV_VARS = {
@@ -88,8 +94,8 @@ DEFAULT_PODMAN_IMAGE = "ghcr.io/nichd-bspc/llm"
 DEFAULT_SINGULARITY_IMAGE = "oras://ghcr.io/nichd-bspc/llm-sif"
 
 # Per-harness "latest" tags. Images are rebuilt daily, but these tags only move
-# when the harness's own version changes, so launching a given harness does not
-# pull a fresh image every day when that harness's version is unchanged. The
+# when the *harness* version changes. That way, launching a given harness does
+# not pull a fresh image every day when that harness hasn't changed. The
 # "shell" subcommand has no single harness, so it falls back to the overall
 # "latest" tag. Override with --tag to pin a specific tag (e.g. --tag latest).
 DEFAULT_IMAGE_TAGS = {
@@ -123,9 +129,9 @@ def fatal(message):
 def split_image_tag(reference):
     """Split an image reference into (name, tag), where tag is None if absent.
 
-    Only a ':' in the final path segment counts as a tag separator, so registry
-    ports (localhost:5000/foo) and URI schemes (oras://...) are not mistaken
-    for tags.
+    ':' only used to separate a tag if it falls in the final path segment;
+    otherwise ports (localhost:5000/foo) and URI schemes (oras://...) might be
+    mistaken for tags.
     """
     last_segment = reference.rpartition("/")[2]
     if ":" in last_segment:
@@ -263,8 +269,8 @@ class PodmanBackend(Backend):
         # onto that same 1000:1000 inside the user namespace and run as it, so
         # the runtime user actually owns its home directory. Using the raw host
         # UID here instead would leave the process unable to write to a home
-        # owned by 1000 whenever the host UID differs.This works both on
-        # rootless Linux (CI) and with Podman Desktop on macOS.
+        # owned by 1000 whenever the host UID differs. This works both on
+        # rootless Linux podman (CI) and with Podman Desktop on macOS.
         userns_arg = "--userns=keep-id:uid=1000,gid=1000"
         user_arg = "--user=1000:1000"
 
@@ -311,15 +317,19 @@ class SingularityBackend(Backend):
         # We want a clean home directory inside the container that still accepts
         # mounts under $HOME.
         #
-        # Passing HOME through the environment (--env HOME=/home/devuser) triggers a
-        # Singularity warning
-        #
-        # --no-home avoids mounting the host's home, but preserves the image's baked-in home contents.
-        #
-        # --contain avoids mounting the host's home as well as the host's entire /tmp
-        #
         # Here we use --home <src>:<dest> to mount an empty temp dir into which
         # other dirs (like `./claude`) can be mounted.
+        #
+        # If we were to pass HOME through the environment (--env
+        # HOME=/home/devuser) then this triggers a Singularity warning
+        #
+        # We need --no-home to avoid mounting the host's home (this is what
+        # Singularity wants to do by default) but still preserves the image's
+        # baked-in home contents.
+        #
+        # --contain avoids mounting the host's home as well as the host's
+        # entire /tmp dir, which are both otherwise default behavior for
+        # Singularity.
         #
         home = env_vars.pop("HOME")
         tmp = tempfile.mkdtemp()
@@ -373,14 +383,16 @@ class Launcher:
                 sif_path = SCRIPT_DIR / sif_path
             args.sif_path = str(sif_path.resolve())
 
-        # a relative --workspace-mount doesn't make sense (what would it be relative to?)
+        # a relative --workspace-mount doesn't make sense (what would it be
+        # relative to, inside the container?)
         if args.workspace_mount and not Path(args.workspace_mount).is_absolute():
             fatal(
                 f"--workspace-mount must be an absolute path, got: {args.workspace_mount}"
             )
 
-        # If mounting a conda env, needs to exist and have a bin dir.
-        # A value without "/" is treated as a named env and resolved via conda.
+        # If mounting a conda env, needs to exist and have a bin dir. A value
+        # without "/" is interpreted as an env name which matches `conda
+        # activate` behavior
         if args.conda_env is not None:
             if "/" not in args.conda_env:
                 args.conda_env = self._resolve_named_conda_env(args.conda_env)
@@ -450,7 +462,7 @@ class Launcher:
             LOGGER.info("Created directory: %s", pi_dir)
 
     def _check_conda_env_arch(self, conda_path):
-        """Fail if the env's python is a Mach-O binary (won't run in Linux container)."""
+        """Fail if the env's python is a Mach-O binary (which won't run in Linux container)."""
         python_bin = conda_path / "bin" / "python"
         if not python_bin.is_file():
             return
@@ -540,10 +552,10 @@ class Launcher:
         """Mount workspace subdirectories read-only over the otherwise-rw
         workspace.
 
-        Each supplied --ro path points at a subdirectory of the mounted
-        workspace whose contents should be readable but not writable from the
-        container. Its real contents are bind-mounted read-only on top of the
-        read-write workspace mount.
+        Each supplied --ro path is a subdirectory of the mounted workspace
+        whose contents should be read-only from the container. Its real
+        contents are bind-mounted read-only on top of the read-write workspace
+        mount.
 
         Order matters, we need this ro mount to happen *after* the rw mount.
 
@@ -596,7 +608,7 @@ class Launcher:
         Resolve conda environment path for use in container PATH.
 
         Returns the path to conda's bin directory as it should appear
-        inside the container
+        inside the container once mounted.
         """
         # Determine if conda env is inside or outside the workspace
         if self._is_path_inside_workspace(conda_path, host_cwd):
