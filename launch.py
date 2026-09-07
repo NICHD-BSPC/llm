@@ -36,13 +36,36 @@ from pathlib import Path, PurePosixPath
 #
 # Profile that will be created
 AWS_EXPORT_PROFILE = "llm-export"
-AWS_CREDENTIALS_JSON = Path.home() / ".aws" / "credentials.json"
+
+# Where credentials/config are stored
+AWS_DIR = Path.home() / ".aws"
+
+# Managed paths
+AWS_MANAGED_BUNDLE_DIR = AWS_DIR / AWS_EXPORT_PROFILE
+AWS_MANAGED_CONFIG = AWS_MANAGED_BUNDLE_DIR / "config"
+AWS_MANAGED_CREDENTIALS_JSON = AWS_MANAGED_BUNDLE_DIR / "credentials.json"
+
+# Where to mount things into the container
+CONTAINER_AWS_DIR = "/home/devuser/.aws"
+CONTAINER_AWS_MANAGED_BUNDLE_DIR = f"{CONTAINER_AWS_DIR}/{AWS_EXPORT_PROFILE}"
+CONTAINER_AWS_MANAGED_CONFIG = f"{CONTAINER_AWS_MANAGED_BUNDLE_DIR}/config"
+
+# Used for AWS auth with env vars (as opposed to using AWS SDK profile)
 AWS_STATIC_CREDENTIAL_ENV_VARS = {
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
     "AWS_SECURITY_TOKEN",
     "AWS_CREDENTIAL_EXPIRATION",
+}
+
+# Keep these out of printed output
+SENSITIVE_ENV_VARS = {
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_SECURITY_TOKEN",
+    "AWS_BEARER_TOKEN_BEDROCK",
 }
 
 # Hard-coded credential and config paths.
@@ -128,12 +151,12 @@ def fatal(message):
 
 def split_image_tag(reference):
     """Split an image reference into (name, tag), where tag is None if absent.
-
-    ':' only used to separate a tag if it falls in the final path segment;
-    otherwise ports (localhost:5000/foo) and URI schemes (oras://...) might be
-    mistaken for tags.
     """
     last_segment = reference.rpartition("/")[2]
+
+    # ':' only used to separate a tag if it falls in the final path segment;
+    # otherwise ports (localhost:5000/foo) and URI schemes (oras://...) might
+    # be mistaken for tags.
     if ":" in last_segment:
         name, _, tag = reference.rpartition(":")
         return name, tag
@@ -220,7 +243,14 @@ class Backend:
         """Validate that the container image exists. Override in subclasses."""
         raise NotImplementedError
 
-    def build_command(self, env_vars, mounts, command_args):
+    def build_command(
+        self, env_vars, mounts, command_args, sensitive_env_file=None
+    ):
+        """Return the container command and arguments without executing them.
+
+        `sensitive_env_file` optionally names a file containing one unquoted
+        `KEY=VALUE` assignment per line.
+        """
         raise NotImplementedError
 
 
@@ -257,10 +287,15 @@ class PodmanBackend(Backend):
                 "Check your network or try 'podman pull' manually."
             )
 
-    def build_command(self, env_vars, mounts, command_args):
+    def build_command(
+        self, env_vars, mounts, command_args, sensitive_env_file=None
+    ):
+        """Build a Podman command, loading secrets from an optional env file."""
         args = self.args
 
         env_args = self.build_env_args(env_vars)
+        if sensitive_env_file:
+            env_args.extend(["--env-file", sensitive_env_file])
         mount_args = self.build_mount_args(mounts)
         mask_args = self.build_mask_args(getattr(args, "mask_targets", []))
 
@@ -309,7 +344,10 @@ class SingularityBackend(Backend):
         if not sif_path.is_file():
             fatal(f"singularity image '{self.args.sif_path}' is not a file.")
 
-    def build_command(self, env_vars, mounts, command_args):
+    def build_command(
+        self, env_vars, mounts, command_args, sensitive_env_file=None
+    ):
+        """Build a Singularity command, loading secrets from an optional env file."""
         args = self.args
 
         # Notes on Singularity arguments:
@@ -336,6 +374,8 @@ class SingularityBackend(Backend):
         atexit.register(shutil.rmtree, tmp, ignore_errors=True)
 
         env_args = self.build_env_args(env_vars)
+        if sensitive_env_file:
+            env_args.extend(["--env-file", sensitive_env_file])
 
         mount_args = self.build_mount_args(mounts)
         mask_args = self.build_mask_args(getattr(args, "mask_targets", []))
@@ -349,6 +389,7 @@ class SingularityBackend(Backend):
             "--home", f"{tmp}:{home}", # creates an empty dir; we can mount into it.
             "--contain",  # avoid mounting /tmp
             "--cleanenv", # don't inherit ALL of the env
+            "--no-eval",  # preserve environment-file values literally
             "--pwd", args.workspace_mount or os.getcwd(),
             args.sif_path,
             *command_args,
@@ -708,6 +749,40 @@ class Launcher:
             key: value for key, value in os.environ.items() if key.startswith(prefixes)
         }
 
+    def _write_sensitive_env_file(self, env_vars):
+        """Write credentials etc to a file.
+
+        `env_vars` is a dictionary.
+
+        Values are written literally as ``KEY=VALUE``, don't include quotes.
+
+        Returns
+        -------
+        tuple[str, str]
+            The environment-file path and its private temporary directory.
+            Directory is not deleted here.
+        """
+        for key, value in env_vars.items():
+            if any(char in value for char in ("\r", "\n", "\0", "'", '"')):
+                fatal(
+                    f"sensitive environment variable {key} contains unsupported "
+                    "newline, NUL, or quote characters"
+                )
+
+        temp_dir = tempfile.mkdtemp(prefix="llm-sensitive-env-")
+        os.chmod(temp_dir, 0o700)
+        env_path = Path(temp_dir) / "environment"
+        try:
+            # "x" is like "w" but fails if file already exists
+            with env_path.open("x", encoding="utf-8") as env_file:
+                os.chmod(env_path, 0o600)
+                for key, value in env_vars.items():
+                    env_file.write(f"{key}={value}\n")
+        except BaseException:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
+        return str(env_path), temp_dir
+
     def _has_static_aws_credentials(self, env):
         """Return True when the env contains direct AWS access key credentials."""
         return bool(env.get("AWS_ACCESS_KEY_ID") and env.get("AWS_SECRET_ACCESS_KEY"))
@@ -746,18 +821,84 @@ class Launcher:
             )
         return False
 
+    def _validate_managed_aws_profile(self):
+        """Validate the managed AWS export before selecting or mounting it.
+
+        The returned string is suitable for the CLI error shown to the user;
+        ``None`` means the profile's process-provider contract is valid and
+        unexpired.
+        """
+        config_path = AWS_MANAGED_CONFIG
+        credentials_path = AWS_MANAGED_CREDENTIALS_JSON
+        expected_process = "sh -c 'cat ~/.aws/llm-export/credentials.json'"
+
+        if not config_path.is_file():
+            return f"managed config is missing: {config_path}"
+        try:
+            config = configparser.ConfigParser(interpolation=None)
+            with config_path.open(encoding="utf-8") as config_file:
+                config.read_file(config_file)
+        except (OSError, UnicodeError, configparser.Error):
+            return f"managed config is malformed: {config_path}"
+
+        section = f"profile {AWS_EXPORT_PROFILE}"
+        if not config.has_section(section):
+            return f"managed config has no [{section}] section"
+        if (
+            config.get(section, "credential_process", fallback="").strip()
+            != expected_process
+        ):
+            return (
+                "managed credential_process does not point to the managed "
+                "credential file"
+            )
+        if not credentials_path.is_file():
+            return f"managed credential file is missing: {credentials_path}"
+        try:
+            if credentials_path.stat().st_mode & 0o077:
+                return "managed credential file is group- or world-readable"
+            with credentials_path.open(encoding="utf-8") as credentials_file:
+                credentials = json.load(credentials_file)
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return f"managed credential file is malformed: {credentials_path}"
+
+        if not isinstance(credentials, dict):
+            return "managed credential JSON must be an object"
+        if type(credentials.get("Version")) is not int or credentials["Version"] != 1:
+            return "managed credentials have an unsupported Version"
+        for field in ("AccessKeyId", "SecretAccessKey", "SessionToken"):
+            value = credentials.get(field)
+            if not isinstance(value, str) or not value.strip():
+                return f"managed credentials require a non-empty {field}"
+        expiration = credentials.get("Expiration")
+        if not isinstance(expiration, str) or not expiration.strip():
+            return "managed credentials require Expiration"
+        try:
+            expires_at = datetime.fromisoformat(expiration.replace("Z", "+00:00"))
+            if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+                return "managed credential Expiration must include a timezone"
+        except ValueError:
+            return "managed credential Expiration is not a valid timestamp"
+        if expires_at <= datetime.now(timezone.utc):
+            return "managed credentials are expired"
+        return None
+
     def _has_exported_aws_profile(self):
-        """Return True when ~/.aws/credentials.json exists."""
-        return AWS_CREDENTIALS_JSON.is_file()
+        """Return True only when the managed profile passes inspection."""
+        return self._validate_managed_aws_profile() is None
+
+    def _invalid_managed_aws_profile(self, error):
+        fatal(
+            f"Managed AWS profile {AWS_EXPORT_PROFILE} is invalid: {error}. "
+            "Refresh it with: refresh.py --aws-profile PROFILE"
+        )
 
     def _validate_bedrock_env(self, env):
-        """Validate Bedrock-related environment requirements once."""
-        has_exported_creds = self._has_exported_aws_profile()
+        """Validate Bedrock-related environment requirements."""
         if (
             self._bedrock_enabled(env)
             and not env.get("AWS_PROFILE")
             and not self._has_static_aws_credentials(env)
-            and not has_exported_creds
         ):
             if self.args.cmd == "pi":
                 required_flag = "PI_USE_BEDROCK=1"
@@ -801,16 +942,56 @@ class Launcher:
         env.update(user_env)
 
         if self._bedrock_enabled(env):
-            has_exported_profile = self._has_exported_aws_profile()
-            suppress_static_aws_creds = (
-                bool(env.get("AWS_PROFILE")) or has_exported_profile
-            )
-            for key, value in self._host_env_with_prefixes("AWS_").items():
-                if suppress_static_aws_creds and key in AWS_STATIC_CREDENTIAL_ENV_VARS:
-                    continue
-                env.setdefault(key, value)
-            if "AWS_PROFILE" not in env and has_exported_profile:
+            host_aws_env = self._host_env_with_prefixes("AWS_")
+            explicit_static_creds = self._has_static_aws_credentials(user_env)
+            explicit_profile = user_env.get("AWS_PROFILE")
+            selected_profile = None
+
+            # This is the primary logic for figuring out which credentials to use.
+
+            if explicit_static_creds:
+
+                # "Static" as in, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.
+                #
+                # This wins even over --env AWS_PROFILE=...
+                #
+                # In this case, ignore any profile env vars or other static-related env vars.
+                for key, value in host_aws_env.items():
+                    if (
+                        key != "AWS_PROFILE"
+                        and key not in AWS_STATIC_CREDENTIAL_ENV_VARS
+                    ):
+                        env.setdefault(key, value)
+                env.pop("AWS_PROFILE", None)
+
+            elif explicit_profile:
+                # That is, --env AWS_PROFILE=...
+                for key, value in host_aws_env.items():
+                    env.setdefault(key, value)
+                selected_profile = explicit_profile
+            elif AWS_MANAGED_BUNDLE_DIR.exists():
+                # Host AWS_PROFILE is used for refresh.py. A managed bundle
+                # wins for launch.py; --env AWS_PROFILE should be explicitly
+                # used if you want different behavior.
+                for key, value in host_aws_env.items():
+                    if key != "AWS_PROFILE":
+                        env.setdefault(key, value)
                 env["AWS_PROFILE"] = AWS_EXPORT_PROFILE
+                selected_profile = AWS_EXPORT_PROFILE
+            else:
+                for key, value in host_aws_env.items():
+                    env.setdefault(key, value)
+                selected_profile = host_aws_env.get("AWS_PROFILE")
+
+            if selected_profile:
+                for key in AWS_STATIC_CREDENTIAL_ENV_VARS:
+                    env.pop(key, None)
+
+            if selected_profile == AWS_EXPORT_PROFILE:
+                managed_error = self._validate_managed_aws_profile()
+                if managed_error:
+                    self._invalid_managed_aws_profile(managed_error)
+                env["AWS_CONFIG_FILE"] = CONTAINER_AWS_MANAGED_CONFIG
 
         if args.certs:
             for var_name in CERT_FILE_ENV_VARS:
@@ -827,7 +1008,7 @@ class Launcher:
             mounts.extend(self._credential_mounts(tool))
 
         if self._bedrock_enabled(env_vars or {}):
-            mounts.extend(self._credential_mounts("aws"))
+            mounts.extend(self._aws_credential_mounts(env_vars or {}))
 
         normalized_mounts = self._normalize_mounts(mounts)
         self._warn_nested_mounts(normalized_mounts)
@@ -902,11 +1083,39 @@ class Launcher:
 
         return None
 
-    def _credential_mounts(self, tool):
-        """
-        Returns list of (host_path, container_path) tuples for the given tool.
+    def _aws_credential_mounts(self, env):
+        """Return read-only mounts required by the effective AWS auth mode.
 
-        Only returns paths that actually exist on the host.
+        - managed bundle is mounted on its own, and read-only, so other AWS
+          credentials don't make it into the container.
+        - A named (and so non-managed) profile does require the full ``~/.aws`` directory
+        - Static env var credentials are sufficient, so nothing on disk needed for them
+        """
+        profile = env.get("AWS_PROFILE")
+        if profile == AWS_EXPORT_PROFILE:
+            error = self._validate_managed_aws_profile()
+            if error:
+                self._invalid_managed_aws_profile(error)
+            return [
+                (
+                    str(AWS_MANAGED_BUNDLE_DIR),
+                    CONTAINER_AWS_MANAGED_BUNDLE_DIR,
+                    True,
+                )
+            ]
+
+        if profile and AWS_DIR.exists():
+            return [(str(AWS_DIR), CONTAINER_AWS_DIR, True)]
+
+        # Direct static credentials need no AWS credential files.
+        return []
+
+    def _credential_mounts(self, tool, readonly=False):
+        """Return existing host credential paths needed by ``tool``.
+
+        Each mount has the form ``(host_path, container_path, readonly)``. Paths in
+        ``CREDENTIAL_PATHS`` are relative to host home dir and will be created
+        releative to container home dir.
         """
         mounts = []
         if tool not in CREDENTIAL_PATHS:
@@ -930,7 +1139,7 @@ class Launcher:
 
             # Only mount if it exists
             if host_path.exists():
-                mounts.append((str(host_path), container_path, False))
+                mounts.append((str(host_path), container_path, readonly))
                 if self.args.verbose:
                     LOGGER.info("Mounting credential: %s", path_str)
             elif self.args.verbose:
@@ -1003,13 +1212,39 @@ class Launcher:
         else:
             command_args = subcommand_config["command"] + args.tool_args
 
-        # Build and execute command
-        cmd = self.backend.build_command(env_vars, mounts, command_args)
+        # The following handles secret values in a way that avoids printing
+        # them in dry-runs or during process inspection.
+        sensitive_env = {
+            key: value for key, value in env_vars.items() if key in SENSITIVE_ENV_VARS
+        }
+        ordinary_env = {
+            key: value for key, value in env_vars.items() if key not in SENSITIVE_ENV_VARS
+        }
+        sensitive_env_file = None
+        sensitive_env_dir = None
+        cleanup_sensitive_env = None
+        try:
+            # Write to file and always clean up afterwards
+            if sensitive_env:
+                sensitive_env_file, sensitive_env_dir = self._write_sensitive_env_file(
+                    sensitive_env
+                )
+                cleanup_sensitive_env = lambda: shutil.rmtree(
+                    sensitive_env_dir, ignore_errors=True
+                )
+                atexit.register(cleanup_sensitive_env)
+            cmd = self.backend.build_command(
+                ordinary_env, mounts, command_args, sensitive_env_file
+            )
 
-        if args.dry_run:
-            print(shlex.join(cmd))
-        else:
-            subprocess.run(cmd, check=True)
+            if args.dry_run:
+                print(shlex.join(cmd))
+            else:
+                subprocess.run(cmd, check=True)
+        finally:
+            if cleanup_sensitive_env:
+                cleanup_sensitive_env()
+                atexit.unregister(cleanup_sensitive_env)
 
 
 def build_parser():
