@@ -69,15 +69,59 @@ if [ "${CLAUDE_CODE_USE_BEDROCK:-0}" = "1" ] || [ "${PI_USE_BEDROCK:-0}" = "1" ]
     BEDROCK_ENABLED=1
 fi
 
-if [ -d ~/.aws ]; then
-    echo "✓ ~/.aws exists"
-    [ -f ~/.aws/config ] && echo "  ✓ config found" || echo "  ✗ config NOT found"
-    [ -d ~/.aws/sso/cache ] && echo "  ✓ sso/cache found" || echo "  ✗ sso/cache NOT found"
-elif [ "$BEDROCK_ENABLED" -eq 1 ]; then
-    echo "✗ ~/.aws does not exist"
-else
-    echo "- ~/.aws not mounted (Bedrock disabled)"
-fi
+AWS_MODE="${TEST_EXPECT_AWS_MODE:-auto}"
+case "$AWS_MODE" in
+    managed)
+        [ "${AWS_PROFILE:-}" = "llm-export" ] \
+            && echo "✓ managed AWS profile selected" \
+            || echo "✗ managed AWS profile NOT selected"
+        [ -f ~/.aws/llm-export/config ] \
+            && echo "✓ managed config found" \
+            || echo "✗ managed config NOT found"
+        [ -f ~/.aws/llm-export/credentials.json ] \
+            && echo "✓ managed credentials found" \
+            || echo "✗ managed credentials NOT found"
+        [ ! -e ~/.aws/sso ] \
+            && echo "✓ AWS SSO cache not mounted" \
+            || echo "✗ AWS SSO cache unexpectedly mounted"
+        if touch ~/.aws/llm-export/.write-test 2>/dev/null; then
+            echo "✗ managed AWS mount is writable"
+            rm -f ~/.aws/llm-export/.write-test
+        else
+            echo "✓ managed AWS mount is read-only"
+        fi
+        ;;
+    profile)
+        [ "${AWS_PROFILE:-}" = "example" ] \
+            && echo "✓ explicit AWS profile selected" \
+            || echo "✗ explicit AWS profile NOT selected"
+        [ -f ~/.aws/config ] && echo "✓ AWS config found" || echo "✗ AWS config NOT found"
+        [ -d ~/.aws/sso/cache ] && echo "✓ sso/cache found" || echo "✗ sso/cache NOT found"
+        if touch ~/.aws/.write-test 2>/dev/null; then
+            echo "✗ explicit-profile AWS mount is writable"
+            rm -f ~/.aws/.write-test
+        else
+            echo "✓ explicit-profile AWS mount is read-only"
+        fi
+        ;;
+    none|static)
+        [ ! -e ~/.aws ] \
+            && echo "✓ ~/.aws not mounted ($AWS_MODE mode)" \
+            || echo "✗ ~/.aws unexpectedly mounted ($AWS_MODE mode)"
+        ;;
+    auto)
+        if [ -d ~/.aws ]; then
+            echo "✓ ~/.aws exists"
+        elif [ "$BEDROCK_ENABLED" -eq 1 ]; then
+            echo "✗ ~/.aws does not exist"
+        else
+            echo "- ~/.aws not mounted (Bedrock disabled)"
+        fi
+        ;;
+    *)
+        echo "✗ unknown TEST_EXPECT_AWS_MODE: $AWS_MODE"
+        ;;
+esac
 echo ""
 
 # 5. Workspace Access

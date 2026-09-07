@@ -43,6 +43,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Run unit tests
+        run: python -m unittest discover -s tests
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -81,8 +84,13 @@ jobs:
         run: |
           set -o pipefail
           log_file="$(mktemp)"
-          mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache"
+          mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache" "$HOME/.aws/llm-export"
           touch "$HOME/.codex/auth.json" "$HOME/.claude/settings.json" "$HOME/.claude.json" "$HOME/.aws/config"
+          cp tests/fixtures/aws-process-credentials.json "$HOME/.aws/llm-export/credentials.json"
+          chmod 600 "$HOME/.aws/llm-export/credentials.json"
+          printf '%s\n' '[profile llm-export]' \
+            "credential_process = sh -c 'cat ~/.aws/llm-export/credentials.json'" \
+            > "$HOME/.aws/llm-export/config"
 
           run_diagnostics() {
             # launch.py uses `-it` when running the container, but this test is
@@ -99,12 +107,17 @@ jobs:
           ls -ld "$HOME/.codex" "$HOME/.claude" "$HOME/.aws" || true
           ls -l "$HOME/.claude.json" || true
 
-          run_diagnostics "bash tests/run-diagnostics.sh --image-name ${PODMAN_IMAGE_NAME} shell podman"
-          run_diagnostics "env AWS_PROFILE=example AWS_REGION=us-east-1 CLAUDE_CODE_USE_BEDROCK=1 bash tests/run-diagnostics.sh --image-name ${PODMAN_IMAGE_NAME} shell podman"
-          run_diagnostics "env AWS_PROFILE=example AWS_REGION=us-east-1 PI_USE_BEDROCK=1 bash tests/run-diagnostics.sh --image-name ${PODMAN_IMAGE_NAME} shell podman"
+          run_diagnostics "bash tests/run-diagnostics.sh -e TEST_EXPECT_AWS_MODE=none --image-name ${PODMAN_IMAGE_NAME} shell podman"
+          run_diagnostics "env AWS_PROFILE=example AWS_REGION=us-east-1 CLAUDE_CODE_USE_BEDROCK=1 bash tests/run-diagnostics.sh -e TEST_EXPECT_AWS_MODE=managed --image-name ${PODMAN_IMAGE_NAME} shell podman"
+          run_diagnostics "env AWS_PROFILE=example AWS_REGION=us-east-1 PI_USE_BEDROCK=1 bash tests/run-diagnostics.sh -e TEST_EXPECT_AWS_MODE=profile -e AWS_PROFILE=example --image-name ${PODMAN_IMAGE_NAME} shell podman"
+          run_diagnostics "env PI_USE_BEDROCK=1 AWS_REGION=us-east-1 bash tests/run-diagnostics.sh -e TEST_EXPECT_AWS_MODE=managed --image-name ${PODMAN_IMAGE_NAME} shell podman"
 
           if grep -q '✗' "$log_file"; then
             echo "Diagnostics output contained a failure marker (✗)." >&2
+            exit 1
+          fi
+          if grep -q 'SYNTHETIC_' "$log_file"; then
+            echo "Diagnostics exposed a synthetic credential value." >&2
             exit 1
           fi
 
@@ -146,8 +159,13 @@ jobs:
         run: |
           set -o pipefail
           log_file="$(mktemp)"
-          mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache"
+          mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.aws/sso/cache" "$HOME/.aws/llm-export"
           touch "$HOME/.codex/auth.json" "$HOME/.claude/settings.json" "$HOME/.claude.json" "$HOME/.aws/config"
+          cp tests/fixtures/aws-process-credentials.json "$HOME/.aws/llm-export/credentials.json"
+          chmod 600 "$HOME/.aws/llm-export/credentials.json"
+          printf '%s\n' '[profile llm-export]' \
+            "credential_process = sh -c 'cat ~/.aws/llm-export/credentials.json'" \
+            > "$HOME/.aws/llm-export/config"
 
           run_diagnostics() {
             script -q -e -c "$1" /dev/null 2>&1 | tee -a "$log_file"
@@ -157,12 +175,17 @@ jobs:
             fi
           }
 
-          run_diagnostics "bash tests/run-diagnostics.sh --sif-path ${SINGULARITY_SIF_PATH} shell singularity"
-          run_diagnostics "env AWS_PROFILE=example AWS_REGION=us-east-1 CLAUDE_CODE_USE_BEDROCK=1 bash tests/run-diagnostics.sh --sif-path ${SINGULARITY_SIF_PATH} shell singularity"
-          run_diagnostics "env AWS_PROFILE=example AWS_REGION=us-east-1 PI_USE_BEDROCK=1 bash tests/run-diagnostics.sh --sif-path ${SINGULARITY_SIF_PATH} shell singularity"
+          run_diagnostics "bash tests/run-diagnostics.sh -e TEST_EXPECT_AWS_MODE=none --sif-path ${SINGULARITY_SIF_PATH} shell singularity"
+          run_diagnostics "env AWS_PROFILE=example AWS_REGION=us-east-1 CLAUDE_CODE_USE_BEDROCK=1 bash tests/run-diagnostics.sh -e TEST_EXPECT_AWS_MODE=managed --sif-path ${SINGULARITY_SIF_PATH} shell singularity"
+          run_diagnostics "env AWS_PROFILE=example AWS_REGION=us-east-1 PI_USE_BEDROCK=1 bash tests/run-diagnostics.sh -e TEST_EXPECT_AWS_MODE=profile -e AWS_PROFILE=example --sif-path ${SINGULARITY_SIF_PATH} shell singularity"
+          run_diagnostics "env PI_USE_BEDROCK=1 AWS_REGION=us-east-1 bash tests/run-diagnostics.sh -e TEST_EXPECT_AWS_MODE=managed --sif-path ${SINGULARITY_SIF_PATH} shell singularity"
 
           if grep -q '✗' "$log_file"; then
             echo "Diagnostics output contained a failure marker (✗)." >&2
+            exit 1
+          fi
+          if grep -q 'SYNTHETIC_' "$log_file"; then
+            echo "Diagnostics exposed a synthetic credential value." >&2
             exit 1
           fi
 
