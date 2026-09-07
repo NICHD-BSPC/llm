@@ -479,10 +479,50 @@ def format_duration(duration: timedelta) -> str:
     return " ".join(parts)
 
 
-def bedrock_export_command() -> str:
-    """Return a shell command that exports a fresh Bedrock bearer token."""
+class _SessionCredentialProvider:
+    """
+    Translate between aws-bedrock-token-generator package (which expects an
+    object with .load()) and botocore, which provides credentials with
+    .get_credentials()
+    """
+
+    def __init__(self, session):
+        self._session = session
+
+    def load(self):
+        return self._session.get_credentials()
+
+
+def bedrock_token(profile, expiry):
+    """Generate a Bedrock bearer token, scoped to ``profile`` when resolved."""
     try:
         from aws_bedrock_token_generator import provide_token
+    except ImportError as exc:
+        raise RuntimeError(
+            "aws-bedrock-token-generator is not installed. Install it with "
+            "'pip install aws-bedrock-token-generator' or from "
+            "https://github.com/aws/aws-bedrock-token-generator-python."
+        ) from exc
+
+    if not profile:
+        return provide_token(expiry=expiry)
+
+    # botocore ships with the token generator; a per-profile session keeps the
+    # selected profile's credentials and region out of global os.environ.
+    from botocore.session import Session
+
+    session = Session(profile=profile)
+    return provide_token(
+        region=session.get_config_variable("region") or os.environ.get("AWS_REGION"),
+        aws_credentials_provider=_SessionCredentialProvider(session),
+        expiry=expiry,
+    )
+
+
+def bedrock_export_command(profile=None):
+    """Return a shell command that exports a fresh Bedrock bearer token."""
+    try:
+        import aws_bedrock_token_generator  # noqa: F401
     except ImportError as exc:
         raise RuntimeError(
             "aws-bedrock-token-generator is not installed. Install it with "
@@ -507,7 +547,7 @@ def bedrock_export_command() -> str:
             "Bedrock token request: 12h; AWS credentials have no reported expiration."
         )
 
-    token = provide_token(expiry=requested_expiry)
+    token = bedrock_token(profile, requested_expiry)
     return f"export AWS_BEARER_TOKEN_BEDROCK={shlex.quote(token)}"
 
 
