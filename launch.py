@@ -292,7 +292,7 @@ class PodmanBackend(Backend):
         if sensitive_env_file:
             env_args.extend(["--env-file", sensitive_env_file])
         mount_args = self.build_mount_args(mounts)
-        mask_args = self.build_mask_args(getattr(args, "mask_targets", []))
+        mask_args = self.build_mask_args(args.mask_targets)
 
         # The image bakes its home directory and dotfiles as UID/GID 1000
         # (see USER_UID/USER_GID in the Dockerfile). Map the current host user
@@ -371,7 +371,7 @@ class SingularityBackend(Backend):
             env_args.extend(["--env-file", sensitive_env_file])
 
         mount_args = self.build_mount_args(mounts)
-        mask_args = self.build_mask_args(getattr(args, "mask_targets", []))
+        mask_args = self.build_mask_args(args.mask_targets)
 
         # fmt: off
         return [
@@ -458,16 +458,21 @@ class Launcher:
             for mount_spec in [*env_mount_specs, *cli_mount_specs]
         ]
 
+        args.mask_targets = []
+        args.nested_ok_targets = set()
         self._resolve_masks()
         self._resolve_ro_mounts()
 
-        if args.path_prepend and PurePosixPath(args.path_prepend).is_absolute():
-            if not self._container_path_is_mounted(args.path_prepend):
-                fatal(
-                    f"--path-prepend path '{args.path_prepend}' is absolute but is "
-                    "not available in the container. Add a matching --mount or "
-                    "use a workspace-relative path."
-                )
+        if (
+            args.path_prepend
+            and PurePosixPath(args.path_prepend).is_absolute()
+            and not self._container_path_is_mounted(args.path_prepend)
+        ):
+            fatal(
+                f"--path-prepend path '{args.path_prepend}' is absolute but is "
+                "not available in the container. Add a matching --mount or "
+                "use a workspace-relative path."
+            )
 
     def setup_codex_config(self):
         """Create default ~/.codex dir"""
@@ -545,89 +550,48 @@ class Launcher:
                 return env_path
         fatal(f"--conda-env named '{name}' not found in 'conda env list'.")
 
-    def _resolve_masks(self):
-        """Resolve --mask paths to container targets to be shadowed.
-
-        Each mask is a path (relative to cwd, or an absolute path inside cwd)
-        pointing at a subdirectory of the mounted workspace whose contents
-        should be hidden from the container.
-        """
-        args = self.args
+    def _resolve_workspace_subpath(self, spec, option):
+        """Resolve a workspace subpath to its host and container paths."""
         host_cwd = os.getcwd()
-        container_workspace = args.workspace_mount or host_cwd
+        host_path = Path(spec).expanduser()
+        if not host_path.is_absolute():
+            host_path = Path(host_cwd) / host_path
+        host_path = host_path.resolve()
 
-        args.mask_targets = []
-
-        if not args.mask:
-            return
-
-        for spec in args.mask:
-            host_path = Path(spec).expanduser()
-            if not host_path.is_absolute():
-                host_path = Path(host_cwd) / host_path
-            host_path = host_path.resolve()
-
-            if not self._is_path_inside_workspace(host_path, host_cwd):
-                fatal(
-                    f"--mask path '{spec}' must be inside the current working "
-                    f"directory ('{host_cwd}')."
-                )
-            if host_path == Path(host_cwd).resolve():
+        if not self._is_path_inside_workspace(host_path, host_cwd):
+            fatal(
+                f"{option} path '{spec}' must be inside the current working "
+                f"directory ('{host_cwd}')."
+            )
+        if host_path == Path(host_cwd).resolve():
+            if option == "--mask":
                 fatal("--mask cannot mask the entire working directory.")
-            if not host_path.exists():
-                fatal(f"--mask path not found: {spec}")
+            fatal(
+                "--ro cannot cover the entire working directory "
+                "(use --global-read-only)."
+            )
+        if not host_path.exists():
+            fatal(f"{option} path not found: {spec}")
 
-            rel = os.path.relpath(host_path, host_cwd)
-            container_target = str(PurePosixPath(container_workspace) / rel)
+        container_workspace = self.args.workspace_mount or host_cwd
+        rel = os.path.relpath(host_path, host_cwd)
+        container_target = str(PurePosixPath(container_workspace) / rel)
+        return host_path, container_target
+
+    def _resolve_masks(self):
+        """Resolve --mask paths to container targets to be shadowed."""
+        args = self.args
+        for spec in args.mask:
+            _, container_target = self._resolve_workspace_subpath(spec, "--mask")
             if container_target not in args.mask_targets:
                 args.mask_targets.append(container_target)
+                args.nested_ok_targets.add(container_target)
 
     def _resolve_ro_mounts(self):
-        """Mount workspace subdirectories read-only over the otherwise-rw
-        workspace.
-
-        Each supplied --ro path is a subdirectory of the mounted workspace
-        whose contents should be read-only from the container. Its real
-        contents are bind-mounted read-only on top of the read-write workspace
-        mount.
-
-        Order matters, we need this ro mount to happen *after* the rw mount.
-
-        The respective container targets are recorded in
-        ``args.nested_ok_targets`` and exempt from the nested-mount warning --
-        since after all we are intentionally nesting mounts.
-        """
+        """Mount selected workspace subdirectories read-only."""
         args = self.args
-        host_cwd = os.getcwd()
-        container_workspace = args.workspace_mount or host_cwd
-
-        if not hasattr(args, "nested_ok_targets"):
-            args.nested_ok_targets = set(getattr(args, "mask_targets", []))
-
-        if not args.ro:
-            return
-
         for spec in args.ro:
-            host_path = Path(spec).expanduser()
-            if not host_path.is_absolute():
-                host_path = Path(host_cwd) / host_path
-            host_path = host_path.resolve()
-
-            if not self._is_path_inside_workspace(host_path, host_cwd):
-                fatal(
-                    f"--ro path '{spec}' must be inside the current working "
-                    f"directory ('{host_cwd}')."
-                )
-            if host_path == Path(host_cwd).resolve():
-                fatal(
-                    "--ro cannot cover the entire working directory "
-                    "(use --global-read-only)."
-                )
-            if not host_path.exists():
-                fatal(f"--ro path not found: {spec}")
-
-            rel = os.path.relpath(host_path, host_cwd)
-            container_target = str(PurePosixPath(container_workspace) / rel)
+            host_path, container_target = self._resolve_workspace_subpath(spec, "--ro")
             args.extra_mounts.append((str(host_path), container_target, True))
             args.nested_ok_targets.add(container_target)
 
@@ -1037,8 +1001,8 @@ class Launcher:
         Mounts whose container target is an intentionally-nested target, from
         --ro or --mask, are ignored since nesting is their whole purpose.
         """
-        # --mask and --ro paths should have been added to self.nested_ok_targets
-        nested_ok = getattr(self.args, "nested_ok_targets", set())
+        # --mask and --ro paths should have been added to nested_ok_targets.
+        nested_ok = self.args.nested_ok_targets
         for index, (host_path, container_path, _) in enumerate(mounts):
             for other_host_path, other_container_path, _ in mounts[index + 1 :]:
                 # nested_container is (parent, child)
