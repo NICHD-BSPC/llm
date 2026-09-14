@@ -73,10 +73,10 @@ variable):
 Refreshes credentials locally, and optionally copies them to a remote host.
 
 - Refreshes Codex authentication (:file:`~/.codex/auth.json`). This is mounted inside running Codex containers, so they will see the new credentials when refreshed.
-- Refreshes AWS SSO credentials and exports them as JSON to
-  :file:`~/.aws/credentials.json`. This is used by the ``llm-export`` profile
-  via ``credential_process`` so containers can read live credentials without a
-  restart; see :ref:`config-aws-export` for why this indirection exists.
+- Refreshes AWS SSO credentials and exports a managed profile bundle under
+  :file:`~/.aws/llm-export`. The bundle is used via ``credential_process`` so
+  containers can read refreshed credentials; see :ref:`config-aws-export` for
+  why this indirection exists.
 - Converts the OpenAI auth tokens in :file:`~/.codex.auth.json` to
   a Pi-compatible format and stores in :file:`~/.pi/agent/auth.json` so that Pi
   can use ChatGPT Enterprise within a container. This needs the
@@ -87,12 +87,12 @@ Refreshes credentials locally, and optionally copies them to a remote host.
 
 .. note::
 
-   If credentials expire mid-session, you can run :cmd:`refresh.py` and then
-   immediately re-try the prompt without exiting the agent or the container.
-
-   This works on a remote, too -- using the ``--remote`` option will push the
-   credentials to the remote, and a running container on the remote will
-   automatically pick up the refreshed credentials.
+   If credentials expire mid-session, run :cmd:`refresh.py` and retry the
+   prompt. Use ``--remote HOST`` when the container runs remotely. The mounted
+   managed file can update without recreating the container, but an SDK or agent
+   may cache credentials until its normal refresh point. If retrying still uses
+   expired credentials, restart the agent process; see
+   :ref:`ts-credentials-expired`.
 
 Examples
 ~~~~~~~~
@@ -103,9 +103,9 @@ Refresh codex & aws locally:
 
    refresh.py
 
-Refresh all and push credentials to a remote system. This exports AWS session
-credentials as :file:`~/.aws/credentials.json` and configures the
-``llm-export`` profile on the remote:
+Refresh all and push credentials to a remote system. This exports the managed
+AWS session credential bundle to :file:`~/.aws/llm-export` on the remote. The
+local SSO cache is not transferred:
 
 .. code-block:: bash
 
@@ -116,6 +116,16 @@ Only refresh codex, and push to remote system:
 .. code-block:: bash
 
    refresh.py --kind codex --remote biowulf.nih.gov
+
+Skip creating and transferring the managed AWS export for this invocation:
+
+.. code-block:: bash
+
+   refresh.py --no-export-creds --remote biowulf.nih.gov
+
+``--no-export-creds`` removes :file:`~/.aws/llm-export` from that invocation's
+remote transfer set, even if a stale bundle already exists locally. It does not
+delete an older bundle already present on the remote.
 
 Refresh all, push credentials **as well as entire agent config dirs** to remote system:
 
@@ -135,6 +145,38 @@ support AWS SSO:
 .. code-block:: bash
 
    eval "$(./refresh.py --bedrock-export)"
+
+``--bedrock-export`` is a separate execution mode. It ignores ``--kind`` and
+``--remote`` and does not enter the normal credential-refresh or transfer
+workflow.
+
+Use a specific AWS source profile for this run, rather than whatever
+``AWS_PROFILE`` says:
+
+.. code-block:: bash
+
+   refresh.py --aws-profile AWSPowerUserAccess-00001
+
+.. _refresh-aws-profile:
+
+Selecting the AWS source profile
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:cmd:`refresh.py` reads credentials from a *source* profile and writes them to
+the managed ``llm-export`` *destination* profile. The source profile is
+resolved once per run, in this order:
+
+1. ``--aws-profile PROFILE``
+2. an inherited ``AWS_PROFILE`` environment variable
+3. otherwise, normal AWS CLI default-profile behavior
+
+The resolved profile is used consistently for the credential expiration check,
+:cmd:`aws sso login`, the process-format credential export, and Bedrock
+bearer-token generation. The selected source profile name and the destination
+profile name are logged; credential values never are.
+
+There is no separate profile configuration file for this tool -- use the AWS
+CLI's own profiles.
 
 .. _launch:
 
@@ -172,15 +214,64 @@ into :file:`/home/devuser` inside the container when they exist:
 - :cmd:`launch.py pi`: :file:`~/.pi`
 - :cmd:`launch.py shell`: :file:`~/.codex`, :file:`~/.claude`, :file:`~/.claude.json`, and :file:`~/.pi`
 
-When Amazon Bedrock is enabled for the effective container environment,
-:file:`~/.aws` is also mounted under these circumstances:
+Amazon Bedrock credential mounts are added under these circumstances:
 
 - ``claude``: when ``CLAUDE_CODE_USE_BEDROCK=1``
 - ``pi``: when ``PI_USE_BEDROCK=1``
 - ``shell``: when ``CLAUDE_CODE_USE_BEDROCK=1`` or ``PI_USE_BEDROCK=1``
 
-If :file:`~/.aws/credentials.json` exists, ``launch.py`` automatically uses
-the ``llm-export`` profile for Bedrock unless ``AWS_PROFILE`` is already set.
+If the managed bundle under :file:`~/.aws/llm-export` is valid, ``launch.py``
+automatically uses the ``llm-export`` profile unless an AWS profile or static
+credentials were explicitly supplied with ``--env``. An inherited host
+``AWS_PROFILE`` remains the source-profile default for :cmd:`refresh.py`, but
+the valid managed bundle takes priority for the container. Only the managed
+bundle is mounted in this mode, read-only. An explicit or fallback non-managed
+AWS profile mounts :file:`~/.aws` read-only; static credentials do not add an
+AWS mount.
+
+Automatic selection requires more than the presence of a file: :cmd:`launch.py`
+checks the managed config, exact ``credential_process`` path, process JSON
+fields and expiration, and private credential-file permissions. If a managed
+bundle exists but is invalid and no explicit launcher override was supplied,
+launch fails early and asks you to run :cmd:`refresh.py` rather than falling
+back to inherited credentials.
+
+AWS authentication modes and precedence
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Bedrock launches distinguish these credential sources, in order:
+
+1. **Explicit static credentials.** A complete access-key and secret-key pair
+   supplied with repeatable ``--env`` options takes precedence. It is delivered
+   through a private temporary environment file and does not add an AWS mount.
+2. **Explicit profile.** ``AWS_PROFILE`` supplied with ``--env`` selects that
+   profile. The full host :file:`~/.aws` directory is mounted read-only because
+   an arbitrary profile may use shared credentials, SSO cache files, or its own
+   ``credential_process``.
+3. **Managed profile.** With neither explicit override, a valid managed bundle
+   is selected as ``llm-export`` and only :file:`~/.aws/llm-export` is mounted
+   read-only. An existing invalid bundle fails with a refresh instruction
+   rather than silently changing AWS identity.
+4. **Inherited profile fallback.** Without a managed bundle, an inherited host
+   ``AWS_PROFILE`` selects that profile and mounts :file:`~/.aws` read-only.
+5. **Inherited static fallback.** If no profile or managed bundle exists, a
+   complete access-key and secret-key pair inherited from the host is supported
+   without an AWS mount. Partial static credentials fail validation.
+
+In short:
+
+.. code-block:: text
+
+   Host AWS_PROFILE -> refresh.py source profile
+   Managed llm-export -> default container profile
+
+Remote hosts normally leave ``AWS_PROFILE`` unset. To request a different
+container profile, use ``launch.py --env AWS_PROFILE=...`` explicitly.
+
+``AWS_BEARER_TOKEN_BEDROCK`` is a separate fixed bearer token, primarily for
+clients that do not use the AWS SDK; see :doc:`bedrock-keys`. It is protected by
+the same temporary environment-file handling when passed with ``--env``, but it
+is not the managed ``llm-export`` profile.
 
 If host proxy variables are set, :file:`launch.py` passes them through to the
 container.
@@ -333,6 +424,15 @@ in the environment:
      --env HOME=/tmp \
      codex
 
+AWS access keys, secret keys, session/security tokens, and Bedrock bearer tokens
+are passed to both supported container runtimes through a temporary environment
+file rather than as command arguments. The file and its private temporary
+directory are removed after the container exits or if launch fails. Sensitive
+values are not shown by ``--dry-run``; only the temporary file path appears.
+Newlines, NUL bytes, and quote characters are rejected in these values because
+they cannot be represented consistently in both runtimes' environment-file
+formats.
+
 Provide a certificates file you've previously downloaded to allow enterprise TLS
 interception (see :doc:`certificates`):
 
@@ -406,9 +506,10 @@ default in the container:
 - For ``claude``, ``pi``, and ``shell``: When Bedrock is enabled (via
   ``CLAUDE_CODE_USE_BEDROCK=1`` or ``PI_USE_BEDROCK=1``): Host environment
   variables starting with ``AWS_``. If ``AWS_PROFILE`` is set or the automatic
-  ``llm-export`` profile is in use, don't send  ``AWS_ACCESS_KEY_ID`` or
-  ``AWS_SESSION_TOKEN`` to the container so that ``credential_process`` in
-  :file:`~/.aws/config` works properly.
+  ``llm-export`` profile is in use, direct static credential variables are not
+  sent to the container so that the selected profile's ``credential_process``
+  works properly. Sensitive AWS values that are sent use a private temporary
+  environment file and do not appear in container-runtime command arguments.
 
 **Certificate variables (when** ``--certs`` **is provided):**
 

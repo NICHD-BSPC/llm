@@ -127,14 +127,17 @@ Configure AWS SSO
 
 Relevant files:
 
-- :file:`~/.aws`: Config directory. **Mounted into containers running Claude or Pi with Bedrock.**
-- :file:`~/.aws/config`: contains profile information (SSO session & account ID),
-  including the ``llm-export`` profile written by :ref:`refresh` (see below)
-- :file:`~/.aws/sso`: SSO token cache, written by :cmd:`aws sso login`. Used on
-  the **local** machine to refresh role credentials; *not used inside containers*.
-- :file:`~/.aws/credentials.json`: short-lived role credentials exported by
-  :ref:`refresh` in process-provider JSON format. *This is the file the container
-  actually reads for Bedrock.*
+- :file:`~/.aws`: User-managed AWS config directory. It is mounted read-only
+  only when an explicit, non-managed AWS profile is selected.
+- :file:`~/.aws/config`: contains user-managed profile information such as SSO
+  sessions and account IDs.
+- :file:`~/.aws/sso`: SSO token cache, written by :cmd:`aws sso login`. It is
+  used locally to refresh role credentials and is not copied to remote systems.
+- :file:`~/.aws/llm-export`: managed bundle written by :ref:`refresh`. It
+  contains the ``llm-export`` config and short-lived process-provider JSON and
+  is mounted read-only when that managed profile is selected. Its
+  :file:`config` is script-owned and is replaced in full on each export; the
+  user-managed :file:`~/.aws/config` is not changed.
 
 .. _config-aws-export:
 
@@ -157,40 +160,42 @@ To handle this, :ref:`refresh` does the following on the local host:
    current short-lived role credentials (access key, secret, session token, and
    an ``Expiration``) as JSON (technically this is "process-provider" formatted
    JSON, which is what we need in this case).
-3. Writes that JSON to :file:`~/.aws/credentials.json`.
-4. Adds an ``llm-export`` profile to :file:`~/.aws/config` whose
-   ``credential_process`` simply prints that file to stdout:
+3. Writes that JSON to
+   :file:`~/.aws/llm-export/credentials.json`.
+4. Writes the ``llm-export`` profile to
+   :file:`~/.aws/llm-export/config`, whose ``credential_process`` simply
+   prints that file to stdout:
 
    .. code-block:: ini
 
       [profile llm-export]
-      credential_process = sh -c 'cat ~/.aws/credentials.json'
+      credential_process = sh -c 'cat ~/.aws/llm-export/credentials.json'
 
-When :ref:`launch` starts a container where Bedrock is used, it mounts
-:file:`~/.aws` and sets ``AWS_PROFILE=llm-export`` (unless you already set an
-override with ``AWS_PROFILE``). The SDK then resolves credentials by running
-the ``credential_process``, which reads :file:`~/.aws/credentials.json`.
+:ref:`launch` automatically selects managed credentials (the ``llm-export``
+profile). It mounts only :file:`~/.aws/llm-export` read-only, sets
+``AWS_PROFILE=llm-export``, and points ``AWS_CONFIG_FILE`` at the managed
+config.
 
 Why this indirection instead of plain ``AWS_*`` environment variables?
 
-The primary reason is that environment variables are frozen at container start
-and would go stale.
+Environment variables are fixed when the container starts and would go stale.
+The AWS SDK has a `documented process credential provider
+<https://docs.aws.amazon.com/sdkref/latest/guide/feature-process-credentials.html>`__
+that can request credentials again when its cached credentials need refreshing.
+The managed command is deliberately just ``cat`` so that this refresh is fast.
 
-However, the AWS SDK has a `documented mechanism
-<https://docs.aws.amazon.com/sdkref/latest/guide/feature-process-credentials.html>`__,
-``credential_process``, that is NOT cached and is **re-invoked every call** by
-the SDK. As such, it need to be a fast-running command, which is why we're
-using ``cat`` here.
+When :ref:`refresh` updates
+:file:`~/.aws/llm-export/credentials.json`, the directory mount makes the new
+contents available without recreating the container. SDKs and agents may cache
+credentials until their normal refresh point, however. Retry the request after running :ref:`refresh`; if the agent
+continues to retain expired credentials, restart the agent process inside the
+container. See :ref:`ts-credentials-expired`.
 
-When :ref:`refresh` rewrites :file:`~/.aws/credentials.json` mid-session, and
-that file has been mounted into the container (which happens by default), the
-running container runs that ``credential_process`` on the next call to the
-model which will pick up the new credentials. No container restart needed.
-
-Because of this, :ref:`launch` deliberately does **not** forward
-``AWS_ACCESS_KEY_ID`` / ``AWS_SESSION_TOKEN`` into the container when the
-``llm-export`` profile (or any ``AWS_PROFILE``) is in use, so that stale env
-vars cannot shadow the ``credential_process`` mechanism.
+When an AWS profile is selected, :ref:`launch` deliberately removes direct
+access-key, secret-key, and session-token variables so stale environment
+credentials cannot shadow the profile's provider. Explicit static credentials
+supplied with ``--env`` are a separate supported mode and take precedence over
+profile auto-selection.
 
 Configure Pi
 ------------

@@ -5,14 +5,73 @@ Why?
 ----
 
 AWS SSO is required for using Amazon Bedrock models, for example with Claude
-Code. If you are only using Codex, you do not need this.
+Code and Pi. If you are only using Codex, you do not need this.
 
-Setting up AWS SSO allows any tool using the AWS SDK to authenticate as well,
-so it affords substantial flexibility.
+Setting up AWS SSO allows any tool using the AWS SDK to authenticate as well.
+That gives you lots of flexibility to use many parts of AWS, not just limited
+to LLM usage.
+
+The "managed profile", ``llm-export``, is a minimal profile with a read-only,
+temporary token provided to the running container. This avoids leaking full AWS
+credentials inside the container.
 
 It is possible to use Azure or Google Cloud Platform instead of AWS, but that
 is not documented here yet.
 
+How it works
+------------
+
+Once you set up an SSO profile, :ref:`refresh` will use that to get temporary
+credentials from AWS. It will put export those credentials into a JSON file,
+which is mounted by :ref:`launch` into a running container. If you use
+``refresh.py --remote <hostname>``, then this JSON will get pushed to the
+remote as well. Inside a running container, the AWS profile is set to the
+special ``llm-export`` profile. That special profile knows that it needs to
+read the JSON file with credentials. This happens on every model call.
+
+The reason we do all of this is because:
+
+- a remote machine over ssh can't open a browser for authentication
+- token refreshes often can't reach back into the container without exposing
+  additional ports
+- even if we put the whole AWS config dir in the container, *Pi caches
+  credentials at load time*. That means if the auth token expires mid-session,
+  the only way to re-auth would be to quit and then restart Pi, which is
+  disruptive.
+
+Your SSO profile is the *source* from which :cmd:`refresh.py` obtains
+credentials. That's what is set up below in the account provisioning. Once that
+is set up, the *managed profile* ``llm-export`` is the *destination* that
+:cmd:`refresh.py` writes. This managed profile is only used by ``launch.py``
+and ``refresh.py``.
+
+.. list-table:: Where should ``AWS_PROFILE`` be set?
+   :header-rows: 1
+   :widths: 22 28 50
+
+   * - Where
+     - ``AWS_PROFILE``
+     - What to do
+   * - Local machine (where you log in through a browser)
+     - Your SSO source profile, for example
+       ``AWSPowerUserAccess-00001``
+     - Set it in your shell, **or** leave it unset and pass
+       ``refresh.py --aws-profile PROFILE``. Never use ``llm-export`` as the
+       source.
+   * - Remote host
+     - Leave unset
+     - Run :cmd:`refresh.py --remote HOST` on the local machine. It copies the
+       managed ``llm-export`` destination bundle to the remote host.
+   * - Container (local or remote)
+     - ``llm-export``, selected automatically by :cmd:`launch.py`
+     - Do not set it yourself. Only use ``launch.py --env AWS_PROFILE=...``
+       when intentionally overriding the managed profile.
+
+Thus, a typical setup has ``AWS_PROFILE=AWSPowerUserAccess-00001`` on your
+laptop, no ``AWS_PROFILE`` on the remote host, and an automatically selected
+``AWS_PROFILE=llm-export`` inside the container.
+
+Read on for how to set this up.
 
 1. :nih:`NIH-specific` Account provisioning
 -------------------------------------------
@@ -40,8 +99,8 @@ This initial setup only needs to be done once per group.
 
   - AWS account name and number
   - List of people: names, usernames, and emails
-  - Existing security group name to use, or the name of a new security group
-    for CIT to create with these users
+  - Either an existing security group name to use, or the name of a new
+    security group for CIT to create with these users
   - The role to assign users in the security group. We are currently using
     ``NIH-AWS-PowerUser``, one of the standard roles set up in an AWS STRIDES
     account.
@@ -124,7 +183,7 @@ Then run the command it suggests at the end, again using your actual account num
    aws sts get-caller-identity --profile AWSPowerUserAccess-00001
 
 We want to use this profile by default, so export these environment variables,
-for example in :file:`~/.bashrc`:
+for example in :file:`~/.bashrc`. **This should only be done on the local machine.**
 
 .. code-block:: bash
 
@@ -166,22 +225,44 @@ shared successfully and can be used until your session expires.
 Once AWS SSO is set up, it usually does not need to be changed and you just use
 it to refresh credentials.
 
-The typical use-case for this repo is to use :ref:`refresh`, which
-automatically handles this for you.
+The typical use-case for this repo is to use :ref:`refresh`, which checks the
+local SSO source profile and writes validated, short-lived credentials to the
+managed :file:`~/.aws/llm-export` destination profile. The source profile and
+``llm-export`` are different: select the source with ``--aws-profile`` or
+``AWS_PROFILE``; do not configure ``llm-export`` as an SSO source profile.
+
+If you have more than one profile configured, or you don't want to rely on
+``AWS_PROFILE`` being exported, tell :cmd:`refresh.py` which profile to read
+credentials from:
+
+.. code-block:: bash
+
+   refresh.py --aws-profile AWSPowerUserAccess-00001
+
+.. note::
+
+   A valid managed bundle takes priority over an inherited host
+   ``AWS_PROFILE``. Use ``launch.py --env AWS_PROFILE=...`` to explicitly request
+   a different container profile instead of ``llm-export``.
+
+   Remote hosts normally leave ``AWS_PROFILE`` unset because they use the
+   managed bundle copied by :cmd:`refresh.py --remote`.
 
 The SSO session lasts for as long as the AWS account admins have configured. It
 can be hours or days before you need to log in again. Within that window, the
-AWS SDK automatically refreshes the shorter-lived (typically 1-hr) role
-credentials as needed.
+AWS CLI/SDK on the local host can refresh the shorter-lived (typically 1-hour)
+role credentials as needed. The exported ``llm-export`` bundle is a snapshot;
+rerun :ref:`refresh` to replace it.
 
 .. warning::
 
-   **This automatic refreshing of the short-lived credentails only works on the
+   **This automatic refreshing of the short-lived credentials only works on the
    local machine.** See :ref:`container-notes-login-model` for why.
 
    This means that if you are working on a remote machine, and the short-lived
-   credentials expire every hour, you will need to run :ref:`refresh` every
-   hour.
+   credentials expire every hour, you will need to run :ref:`refresh` with
+   ``--remote HOST`` every hour. Only the managed export bundle is copied; the
+   local :file:`~/.aws/sso` cache is never transferred.
 
    To streamline this as much as possible, you may want to ensure that:
 
