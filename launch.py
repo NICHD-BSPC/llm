@@ -1184,17 +1184,11 @@ class Launcher:
         }
         sensitive_env_file = None
         sensitive_env_dir = None
-        cleanup_sensitive_env = None
         try:
-            # Write to file and always clean up afterwards
             if sensitive_env:
                 sensitive_env_file, sensitive_env_dir = self._write_sensitive_env_file(
                     sensitive_env
                 )
-                cleanup_sensitive_env = lambda: shutil.rmtree(
-                    sensitive_env_dir, ignore_errors=True
-                )
-                atexit.register(cleanup_sensitive_env)
             cmd = self.backend.build_command(
                 ordinary_env, mounts, command_args, sensitive_env_file
             )
@@ -1204,9 +1198,8 @@ class Launcher:
             else:
                 subprocess.run(cmd, check=True)
         finally:
-            if cleanup_sensitive_env:
-                cleanup_sensitive_env()
-                atexit.unregister(cleanup_sensitive_env)
+            if sensitive_env_dir:
+                shutil.rmtree(sensitive_env_dir, ignore_errors=True)
 
 
 def build_parser():
