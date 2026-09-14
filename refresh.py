@@ -312,6 +312,14 @@ def convert_codex_auth_to_pi(src, dest):
                 f"Existing Pi auth.json must contain a JSON object: {dest}"
             )
 
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    if expires <= now_ms:
+        expired_at = datetime.fromtimestamp(expires / 1000, timezone.utc)
+        raise ValueError(
+            f"Codex access token in {src} expired at {expired_at}; refusing to "
+            "write it to Pi auth. Run 'codex login' and retry."
+        )
+
     pi_data["openai-codex"] = {
         "type": "oauth",
         "access": access,
