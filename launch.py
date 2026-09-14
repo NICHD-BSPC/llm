@@ -844,10 +844,6 @@ class Launcher:
             return "managed credentials are expired"
         return None
 
-    def _has_exported_aws_profile(self):
-        """Return True only when the managed profile passes inspection."""
-        return self._validate_managed_aws_profile() is None
-
     def _invalid_managed_aws_profile(self, error):
         fatal(
             f"Managed AWS profile {AWS_EXPORT_PROFILE} is invalid: {error}. "
@@ -873,6 +869,43 @@ class Launcher:
                 "--env AWS_PROFILE=..., or create the llm-export profile with "
                 "refresh.py."
             )
+
+    def _add_aws_environment(self, env, user_env):
+        """Select and add the effective AWS credential environment."""
+        host_aws_env = self._host_env_with_prefixes("AWS_")
+        explicit_static_creds = self._has_static_aws_credentials(user_env)
+        explicit_profile = user_env.get("AWS_PROFILE")
+        selected_profile = None
+
+        if explicit_static_creds:
+            for key, value in host_aws_env.items():
+                if key != "AWS_PROFILE" and key not in AWS_STATIC_CREDENTIAL_ENV_VARS:
+                    env.setdefault(key, value)
+            env.pop("AWS_PROFILE", None)
+        elif explicit_profile:
+            for key, value in host_aws_env.items():
+                env.setdefault(key, value)
+            selected_profile = explicit_profile
+        elif AWS_MANAGED_BUNDLE_DIR.exists():
+            for key, value in host_aws_env.items():
+                if key != "AWS_PROFILE":
+                    env.setdefault(key, value)
+            env["AWS_PROFILE"] = AWS_EXPORT_PROFILE
+            selected_profile = AWS_EXPORT_PROFILE
+        else:
+            for key, value in host_aws_env.items():
+                env.setdefault(key, value)
+            selected_profile = host_aws_env.get("AWS_PROFILE")
+
+        if selected_profile:
+            for key in AWS_STATIC_CREDENTIAL_ENV_VARS:
+                env.pop(key, None)
+
+        if selected_profile == AWS_EXPORT_PROFILE:
+            managed_error = self._validate_managed_aws_profile()
+            if managed_error:
+                self._invalid_managed_aws_profile(managed_error)
+            env["AWS_CONFIG_FILE"] = CONTAINER_AWS_MANAGED_CONFIG
 
     def build_env_vars(self):
         """Build all environment variables for the container."""
@@ -903,56 +936,7 @@ class Launcher:
         env.update(user_env)
 
         if self._bedrock_enabled(env):
-            host_aws_env = self._host_env_with_prefixes("AWS_")
-            explicit_static_creds = self._has_static_aws_credentials(user_env)
-            explicit_profile = user_env.get("AWS_PROFILE")
-            selected_profile = None
-
-            # This is the primary logic for figuring out which credentials to use.
-
-            if explicit_static_creds:
-
-                # "Static" as in, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.
-                #
-                # This wins even over --env AWS_PROFILE=...
-                #
-                # In this case, ignore any profile env vars or other static-related env vars.
-                for key, value in host_aws_env.items():
-                    if (
-                        key != "AWS_PROFILE"
-                        and key not in AWS_STATIC_CREDENTIAL_ENV_VARS
-                    ):
-                        env.setdefault(key, value)
-                env.pop("AWS_PROFILE", None)
-
-            elif explicit_profile:
-                # That is, --env AWS_PROFILE=...
-                for key, value in host_aws_env.items():
-                    env.setdefault(key, value)
-                selected_profile = explicit_profile
-            elif AWS_MANAGED_BUNDLE_DIR.exists():
-                # Host AWS_PROFILE is used for refresh.py. A managed bundle
-                # wins for launch.py; --env AWS_PROFILE should be explicitly
-                # used if you want different behavior.
-                for key, value in host_aws_env.items():
-                    if key != "AWS_PROFILE":
-                        env.setdefault(key, value)
-                env["AWS_PROFILE"] = AWS_EXPORT_PROFILE
-                selected_profile = AWS_EXPORT_PROFILE
-            else:
-                for key, value in host_aws_env.items():
-                    env.setdefault(key, value)
-                selected_profile = host_aws_env.get("AWS_PROFILE")
-
-            if selected_profile:
-                for key in AWS_STATIC_CREDENTIAL_ENV_VARS:
-                    env.pop(key, None)
-
-            if selected_profile == AWS_EXPORT_PROFILE:
-                managed_error = self._validate_managed_aws_profile()
-                if managed_error:
-                    self._invalid_managed_aws_profile(managed_error)
-                env["AWS_CONFIG_FILE"] = CONTAINER_AWS_MANAGED_CONFIG
+            self._add_aws_environment(env, user_env)
 
         if args.certs:
             for var_name in CERT_FILE_ENV_VARS:
