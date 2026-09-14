@@ -151,13 +151,6 @@ def resolve_source_profile(cli_profile=None):
     return None
 
 
-def with_profile(cmd, profile):
-    """Append ``--profile PROFILE`` as separate argv entries"""
-    if not profile:
-        return list(cmd)
-    return [*cmd, "--profile", profile]
-
-
 def refresh_aws_sso(profile=None):
     """Check AWS SSO credentials and refresh if needed, using ``profile`` if given."""
     try:
@@ -173,8 +166,11 @@ def refresh_aws_sso(profile=None):
         ValueError,
     ) as e:
         LOGGER.warning("AWS credential check failed (%s), running aws sso login...", e)
+        cmd = ["aws", "sso", "login"]
+        if profile:
+            cmd.extend(["--profile", profile])
         try:
-            subprocess.run(with_profile(["aws", "sso", "login"], profile), check=True)
+            subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as login_error:
             raise RuntimeError(
                 "Unable to refresh AWS SSO credentials. Run 'aws configure sso' "
@@ -347,8 +343,11 @@ def update_pi_codex_auth():
 
 def aws_credential_expiration(profile=None):
     """Return the AWS credential expiration string from the AWS CLI."""
+    cmd = ["aws", "configure", "export-credentials"]
+    if profile:
+        cmd.extend(["--profile", profile])
     result = subprocess.run(
-        with_profile(["aws", "configure", "export-credentials"], profile),
+        cmd,
         capture_output=True,
         text=True,
         check=True,
@@ -460,7 +459,19 @@ def export_aws_profile(profile=None):
     ``profile`` is the *source* profile to read credentials from; the
     destination profile is always the managed ``llm-export`` one.
     """
-    creds = aws_export_credentials(profile)
+
+    # Capture the credentails with the AWS CLI, dump to json that we can mount
+    # inside container
+    cmd = ["aws", "configure", "export-credentials", "--format", "process"]
+    if profile:
+        cmd.extend(["--profile", profile])
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    creds = validate_aws_process_credentials(json.loads(result.stdout))
 
     aws_root = AWS_MANAGED_BUNDLE_DIR.parent
     aws_root_existed = aws_root.exists()
