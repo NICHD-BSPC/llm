@@ -362,11 +362,12 @@ class SingularityBackend(Backend):
         # entire /tmp dir, which are both otherwise default behavior for
         # Singularity.
         #
-        home = env_vars.pop("HOME")
+        home = env_vars["HOME"]
+        runtime_env = {key: value for key, value in env_vars.items() if key != "HOME"}
         tmp = tempfile.mkdtemp()
         atexit.register(shutil.rmtree, tmp, ignore_errors=True)
 
-        env_args = self.build_env_args(env_vars)
+        env_args = self.build_env_args(runtime_env)
         if sensitive_env_file:
             env_args.extend(["--env-file", sensitive_env_file])
 
