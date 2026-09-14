@@ -262,11 +262,10 @@ what files need to be transported to the remote host (see :doc:`config-files`
 for these) and takes care of the ``rsync`` commands for that as well.
 
 For AWS/Bedrock specifically, :ref:`refresh` does not copy the
-:file:`~/.aws/sso` token cache to the remote. Instead it creates
-:file:`~/.aws/credentials.json` with current short-lived role credentials on
-the host and syncs :file:`~/.aws/config` and :file:`~/.aws/credentials.json`
-(the ``llm-export`` profile and its credentials file). See
-:ref:`config-aws-export` for how that mechanism works.
+:file:`~/.aws/sso` token cache to the remote. Instead it creates and syncs the
+:file:`~/.aws/llm-export` managed bundle, containing only the managed profile
+config and current short-lived role credentials. See :ref:`config-aws-export`
+for how that mechanism works.
 
 Because the remote runs entirely off these exported credentials and cannot
 refresh them independently, they expire on the usual STS schedule (typically ~1
@@ -281,15 +280,12 @@ Refreshing credentials without stopping container
 -------------------------------------------------
 
 You must refresh credentials *outside the container* (see
-:ref:`container-notes-login-model`) but you don't need to stop the container to
-do this. See :ref:`ts-credentials-expired` for troubleshooting expired or
-missing credentials. For example, Claude Code running in a container may not be able to
-connect due to credentials expiring, but as soon as you use :ref:`refresh` and
-the credentials on the host are updated, Claude Code can see them
-since they are mounted into the container. While Claude Code does retry
-attempts, if it has been a while between old credentials expiring and new ones
-being available then you might need to re-send your latest prompt, or just send
-"continue" as the next prompt.
+:ref:`container-notes-login-model`). Updates to the credential file are visible
+through the managed directory mount, so you do not normally need to recreate
+the container. An SDK or agent may retain cached credentials
+until its normal refresh point. Retry the request after refreshing; if it still
+uses expired credentials, restart the agent process. See
+:ref:`ts-credentials-expired` for the recovery steps.
 
 
 .. _container-notes-persistent-mounts:
@@ -313,7 +309,21 @@ The host's home directory is not mounted. Even though Singularity mounts it by
 default, this setup specifically disables that behavior to reduce exposure.
 
 Only the credentials and config needed for each tool is mounted -- unless you
-call :ref:`launch` with ``shell`` which will mount them all.
+call :ref:`launch` with ``shell`` which will mount the agent config paths for all
+supported tools.
+
+AWS visibility is determined separately when Bedrock is enabled:
+
+- Managed ``llm-export``: only :file:`~/.aws/llm-export`, read-only. Other
+  profiles and the local SSO cache are not visible.
+- Explicit ``AWS_PROFILE``: all of :file:`~/.aws`, read-only, because arbitrary
+  profiles may depend on files throughout that directory.
+- Static environment credentials: no AWS filesystem mount.
+
+Static AWS secrets and Bedrock bearer tokens are supplied to the runtime through
+a mode-``0600`` temporary environment file, not ``--env KEY=VALUE`` command
+arguments. Ordinary environment settings such as ``AWS_REGION`` remain normal
+runtime arguments.
 
 If you regularly mount the same extra paths, set
 ``LLM_DEVCONTAINER_MOUNTS`` to a shell-style list of mount specs using the same
