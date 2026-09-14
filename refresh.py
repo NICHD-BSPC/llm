@@ -33,7 +33,10 @@ AWS_EXPORT_PROFILE = "llm-export"
 AWS_MANAGED_BUNDLE_DIR = Path.home() / ".aws" / AWS_EXPORT_PROFILE
 AWS_CREDENTIALS_JSON = AWS_MANAGED_BUNDLE_DIR / "credentials.json"
 AWS_CONFIG_PATH = AWS_MANAGED_BUNDLE_DIR / "config"
-PI_DIR = Path.home() / ".pi"
+MANAGED_AWS_CONFIG = """[profile llm-export]
+credential_process = sh -c 'cat ~/.aws/llm-export/credentials.json'
+"""
+
 # This is public information; we can use it to rotate tokens ourselves rather
 # than shell out to `codex login`. Still need `codex login` for if refresh
 # token is missing.
@@ -323,22 +326,7 @@ def convert_codex_auth_to_pi(src, dest):
     if account_id:
         pi_data["openai-codex"]["accountId"] = account_id
 
-    atomic_write_text(
-        dest,
-        json.dumps(pi_data, indent=2) + "\n",
-        file_mode=0o600,
-        new_parent_mode=0o700,
-    )
-
-
-def update_pi_codex_auth():
-    """Upsert Codex OAuth credentials into Pi auth.json."""
-    src = Path(os.environ.get("CODEX_AUTH_PATH", Path.home() / ".codex" / "auth.json"))
-    dest = Path(
-        os.environ.get("PI_AUTH_PATH", Path.home() / ".pi" / "agent" / "auth.json")
-    )
-    convert_codex_auth_to_pi(src, dest)
-    LOGGER.info("Updated Pi Codex auth at %s", dest)
+    write_private_text(dest, json.dumps(pi_data, indent=2) + "\n")
 
 
 def aws_credential_expiration(profile=None):
@@ -384,75 +372,6 @@ def validate_aws_process_credentials(
     return creds
 
 
-def aws_export_credentials(profile=None):
-    """Return validated AWS credentials in process-provider JSON format."""
-    result = subprocess.run(
-        with_profile(
-            ["aws", "configure", "export-credentials", "--format", "process"],
-            profile,
-        ),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return validate_aws_process_credentials(json.loads(result.stdout))
-
-
-def upsert_ini_section(path: Path, section: str, entries: dict[str, str]) -> None:
-    """Replace or append a managed INI section while preserving other sections.
-
-    If ``section`` already exists in the file at ``path``, its contents are
-    replaced with ``entries``. If it doesn't exist, it is appended at the end.
-    All other sections in the file are left untouched.
-
-    Args:
-        path: Path to the INI file (created along with parent dirs if missing).
-        section: The section name without brackets, and including "profile", e.g. "profile llm-export".
-        entries: Key/value pairs to write under the section header.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        lines = path.read_text().splitlines()
-    except FileNotFoundError:
-        lines = []
-
-    # Note: we're not using configparser because it lowercases keys, strips
-    # comments, reorders sections, and doesn't round-trip formatting well — all
-    # of which matter for ~/.aws/config files you might also be editing
-    # manually.
-    section_header = f"[{section}]"
-    section_pattern = re.compile(r"^\s*\[.*\]\s*$")
-    rendered_section = [
-        section_header,
-        *[f"{key} = {value}" for key, value in entries.items()],
-    ]
-
-    output_lines = []
-    index = 0
-    replaced = False
-    while index < len(lines):
-        line = lines[index]
-        if line.strip() == section_header:
-            replaced = True
-            output_lines.extend(rendered_section)
-            index += 1
-            while index < len(lines) and not section_pattern.match(lines[index]):
-                index += 1
-            if index < len(lines) and output_lines and output_lines[-1] != "":
-                output_lines.append("")
-            continue
-
-        output_lines.append(line)
-        index += 1
-
-    if not replaced:
-        if output_lines and output_lines[-1] != "":
-            output_lines.append("")
-        output_lines.extend(rendered_section)
-
-    atomic_write_text(path, "\n".join(output_lines).rstrip() + "\n")
-
-
 def export_aws_profile(profile=None):
     """Export AWS credentials as JSON and configure the llm-export profile.
 
@@ -479,22 +398,8 @@ def export_aws_profile(profile=None):
     if not aws_root_existed:
         os.chmod(aws_root, 0o700)
 
-    atomic_write_text(
-        AWS_CREDENTIALS_JSON,
-        json.dumps(creds, indent=2) + "\n",
-        file_mode=0o600,
-        new_parent_mode=0o700,
-    )
-
-    # Keep the managed config and process JSON in one directory so a
-    # read-only directory mount handles atomic credential replacements.
-    upsert_ini_section(
-        AWS_CONFIG_PATH,
-        f"profile {AWS_EXPORT_PROFILE}",
-        {
-            "credential_process": ("sh -c 'cat ~/.aws/llm-export/credentials.json'"),
-        },
-    )
+    write_private_text(AWS_CREDENTIALS_JSON, json.dumps(creds, indent=2) + "\n")
+    write_private_text(AWS_CONFIG_PATH, MANAGED_AWS_CONFIG)
     LOGGER.info(
         "Exported AWS credentials from source profile %s to %s",
         profile or "(AWS CLI default)",
