@@ -444,36 +444,10 @@ class _SessionCredentialProvider:
         return self._session.get_credentials()
 
 
-def bedrock_token(profile, expiry):
-    """Generate a Bedrock bearer token, scoped to ``profile`` when resolved."""
-    try:
-        from aws_bedrock_token_generator import provide_token
-    except ImportError as exc:
-        raise RuntimeError(
-            "aws-bedrock-token-generator is not installed. Install it with "
-            "'pip install aws-bedrock-token-generator' or from "
-            "https://github.com/aws/aws-bedrock-token-generator-python."
-        ) from exc
-
-    if not profile:
-        return provide_token(expiry=expiry)
-
-    # botocore ships with the token generator; a per-profile session keeps the
-    # selected profile's credentials and region out of global os.environ.
-    from botocore.session import Session
-
-    session = Session(profile=profile)
-    return provide_token(
-        region=session.get_config_variable("region") or os.environ.get("AWS_REGION"),
-        aws_credentials_provider=_SessionCredentialProvider(session),
-        expiry=expiry,
-    )
-
-
 def bedrock_export_command(profile=None):
     """Return a shell command that exports a fresh Bedrock bearer token."""
     try:
-        import aws_bedrock_token_generator  # noqa: F401
+        from aws_bedrock_token_generator import provide_token
     except ImportError as exc:
         raise RuntimeError(
             "aws-bedrock-token-generator is not installed. Install it with "
@@ -498,7 +472,24 @@ def bedrock_export_command(profile=None):
             "Bedrock token request: 12h; AWS credentials have no reported expiration."
         )
 
-    token = bedrock_token(profile, requested_expiry)
+    if profile:
+        # `aws_bedrock_token_generator.provide_token` normally uses the
+        # process-wide AWS credential chain. Here, give it a provider backed by
+        # this session so credentials (including refreshed SSO credentials) and
+        # region come from the requested profile without changing the any
+        # AWS_PROFILE set in the environment.
+        from botocore.session import Session
+
+        session = Session(profile=profile)
+        token = provide_token(
+            region=session.get_config_variable("region")
+            or os.environ.get("AWS_REGION"),
+            aws_credentials_provider=_SessionCredentialProvider(session),
+            expiry=requested_expiry,
+        )
+    else:
+        token = provide_token(expiry=requested_expiry)
+
     return f"export AWS_BEARER_TOKEN_BEDROCK={shlex.quote(token)}"
 
 
@@ -519,7 +510,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     ap.add_argument(
         "--kind",
-        choices=("claude", "codex", "pi", "all", "bedrock"),
+        choices=("claude", "codex", "pi", "all"),
         default="all",
         help="Which credential set to sync (default: %(default)s)",
     )
@@ -528,7 +519,7 @@ def parse_args(argv=None) -> argparse.Namespace:
         action="store_true",
         help=(
             "Print a shell command that exports AWS_BEARER_TOKEN_BEDROCK "
-            "using aws-bedrock-token-generator"
+            "using aws-bedrock-token-generator. --kind and --remote are ignored."
         ),
     )
     ap.add_argument(
@@ -549,10 +540,7 @@ def parse_args(argv=None) -> argparse.Namespace:
         default=user,
         help="username for remote, defaults to %(default)s",
     )
-    args = ap.parse_args(argv)
-    if args.bedrock_export:
-        args.kind = "bedrock"
-    return args
+    return ap.parse_args(argv)
 
 
 def transfer_paths(kind: str, full: bool, include_aws_export: bool = True) -> list[str]:
@@ -586,28 +574,52 @@ def main() -> int:
                 print(f"    {path}")
         sys.exit(0)
 
-    if args.kind in ("all", "claude", "pi", "bedrock"):
+    source_profile = next(
+        (
+            candidate
+            for candidate in (args.aws_profile, os.environ.get("AWS_PROFILE"))
+            if candidate and candidate.strip()
+        ),
+        None,
+    )
+
+    if args.bedrock_export:
         LOGGER.info(
             "AWS source profile: %s; destination profile: %s",
             source_profile or "(AWS CLI default)",
             AWS_EXPORT_PROFILE,
         )
-
-    if args.kind in ("all", "claude", "pi"):
-        refresh_aws_sso(source_profile)
-        if not args.no_export_creds:
-            export_aws_profile(source_profile)
-    if args.kind in ("all", "codex", "pi"):
-        refresh_codex()
-        update_pi_codex_auth()
-    if args.kind == "bedrock":
         try:
             refresh_aws_sso(source_profile)
             print(bedrock_export_command(source_profile))
-        except RuntimeError as e:
-            LOGGER.error("%s", e)
+        except RuntimeError as exc:
+            LOGGER.error("%s", exc)
             return 1
         return 0
+
+    refresh_aws = args.kind in ("all", "claude", "pi")
+    refresh_openai = args.kind in ("all", "codex", "pi")
+
+    if refresh_aws:
+        LOGGER.info(
+            "AWS source profile: %s; destination profile: %s",
+            source_profile or "(AWS CLI default)",
+            AWS_EXPORT_PROFILE,
+        )
+        refresh_aws_sso(source_profile)
+        if not args.no_export_creds:
+            export_aws_profile(source_profile)
+
+    if refresh_openai:
+        codex_path = Path(
+            os.environ.get("CODEX_AUTH_PATH", Path.home() / ".codex" / "auth.json")
+        )
+        pi_auth_path = Path(
+            os.environ.get("PI_AUTH_PATH", Path.home() / ".pi" / "agent" / "auth.json")
+        )
+        refresh_codex(codex_path)
+        convert_codex_auth_to_pi(codex_path, pi_auth_path)
+        LOGGER.info("Updated Pi Codex auth at %s", pi_auth_path)
 
     paths = transfer_paths(
         args.kind,
