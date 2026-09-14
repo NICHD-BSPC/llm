@@ -47,7 +47,6 @@ CODEX_REFRESH_WINDOW = timedelta(days=1)
 CREDENTIAL_PATHS = {
     "codex": {
         "auth": ("~/.codex/auth.json",),
-        "config": ("~/.codex/config.toml",),
         "full": (
             "~/.codex/config.toml",
             "~/.codex/auth.json",
@@ -57,7 +56,6 @@ CREDENTIAL_PATHS = {
     },
     "claude": {
         "auth": ("~/.aws/llm-export",),
-        "config": ("~/.claude/settings.json", "~/.claude.json"),
         "full": (
             "~/.claude/settings.json",
             "~/.claude.json",
@@ -69,7 +67,6 @@ CREDENTIAL_PATHS = {
         # Include auth.json to support ChatGPT Enterprise login, where we
         # convert the codex login auth.json into something that Pi can use
         "auth": ("~/.pi/agent/auth.json", "~/.aws/llm-export"),
-        "config": ("~/.pi/agent/settings.json",),
         "full": (
             "~/.pi/agent/skills",
             "~/.pi/agent/settings.json",
