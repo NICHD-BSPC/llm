@@ -80,57 +80,22 @@ CREDENTIAL_PATHS = {
 }
 
 
-def atomic_write_text(
-    path,
-    content,
-    *,
-    file_mode=None,
-    new_parent_mode=None,
-):
-    """Atomically replace a file using a temporary file in the same directory."""
+def write_private_text(path, content):
+    """Write a private file, creating its parent directory if needed."""
     parent_existed = path.parent.exists()
-    path.parent.mkdir(parents=True, exist_ok=True, mode=new_parent_mode or 0o777)
-    if new_parent_mode is not None and not parent_existed:
-        os.chmod(path.parent, new_parent_mode)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not parent_existed:
+        os.chmod(path.parent, 0o700)
 
-    temp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temp_file:
-            temp_path = Path(temp_file.name)
-            if file_mode is not None:
-                os.chmod(temp_path, file_mode)
-            elif path.exists():
-                os.chmod(temp_path, path.stat().st_mode & 0o777)
-            temp_file.write(content)
-            temp_file.flush()
-            os.fsync(temp_file.fileno())
-        os.replace(temp_path, path)
-        temp_path = None
-    finally:
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
-
-
-def home_relative_path(path):
-    """Return a path relative to the user's home directory.
-
-    Used for batching together rsync calls.
-    """
-    local_path = os.path.expanduser(path)
-    home_dir = os.path.abspath(os.path.expanduser("~"))
-    absolute_path = os.path.abspath(local_path)
-    if os.path.commonpath([home_dir, absolute_path]) != home_dir:
-        raise ValueError(
-            f"Path must be inside the home directory for batched rsync: {path}"
-        )
-    return os.path.relpath(absolute_path, home_dir)
+    # open(path, "w") leaves an existing file's mode unchanged; since these are
+    # credentials we're keeping the permissions 600 all the time.
+    with os.fdopen(
+        os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+        "w",
+        encoding="utf-8",
+    ) as output:
+        os.fchmod(output.fileno(), 0o600)
+        output.write(content)
 
 
 def rsync_paths(paths, user, remote):
