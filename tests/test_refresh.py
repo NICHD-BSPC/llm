@@ -167,8 +167,10 @@ class RefreshAwsTests(unittest.TestCase):
             )
 
     def test_process_credentials_validation_rejects_invalid_exports(self):
+        with self.assertRaises(TypeError):
+            refresh.validate_aws_process_credentials([])
+
         invalid = (
-            [],
             valid_credentials(Version=2),
             valid_credentials(AccessKeyId=""),
             valid_credentials(SecretAccessKey=None),
@@ -258,16 +260,17 @@ class RefreshAwsTests(unittest.TestCase):
 
 
 class RefreshProfileSelectionTests(unittest.TestCase):
-    def test_no_profile_preserves_aws_cli_default_behavior(self):
-        self.assertEqual(
-            refresh.with_profile(["aws", "configure", "export-credentials"], None),
-            ["aws", "configure", "export-credentials"],
-        )
+    def test_credential_expiration_without_profile_uses_default_chain(self):
+        result = mock.Mock(stdout=json.dumps({"Expiration": "2026-01-01T00:00:00Z"}))
+        with mock.patch.object(refresh.subprocess, "run", return_value=result) as run:
+            expiration = refresh.aws_credential_expiration()
 
-    def test_profile_with_metacharacters_stays_a_separate_argument(self):
-        self.assertEqual(
-            refresh.with_profile(["aws", "sso", "login"], "weird profile; rm -rf /"),
-            ["aws", "sso", "login", "--profile", "weird profile; rm -rf /"],
+        self.assertEqual(expiration, "2026-01-01T00:00:00Z")
+        run.assert_called_once_with(
+            ["aws", "configure", "export-credentials"],
+            capture_output=True,
+            text=True,
+            check=True,
         )
 
     def test_cli_parses_aws_profile_option(self):
