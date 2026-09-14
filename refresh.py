@@ -11,6 +11,8 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -32,6 +34,14 @@ AWS_MANAGED_BUNDLE_DIR = Path.home() / ".aws" / AWS_EXPORT_PROFILE
 AWS_CREDENTIALS_JSON = AWS_MANAGED_BUNDLE_DIR / "credentials.json"
 AWS_CONFIG_PATH = AWS_MANAGED_BUNDLE_DIR / "config"
 PI_DIR = Path.home() / ".pi"
+# This is public information; we can use it to rotate tokens ourselves rather
+# than shell out to `codex login`. Still need `codex login` for if refresh
+# token is missing.
+CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token"
+CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+
+# Refresh when the access token has less than this much life left.
+CODEX_REFRESH_WINDOW = timedelta(days=1)
 
 CREDENTIAL_PATHS = {
     "codex": {
@@ -207,19 +217,53 @@ def refresh_aws_sso(profile=None):
             ) from login_error
 
 
-def refresh_codex():
-    """Check codex login status and login if needed."""
-    result = subprocess.run(
-        ["codex", "login", "status"],
-        capture_output=True,
-        text=True,
-    )
-    output = result.stdout.strip() or result.stderr.strip()
-    if output == "Logged in using ChatGPT":
-        LOGGER.info("Codex: already logged in.")
-    else:
-        LOGGER.warning("Codex: not logged in (%r), running codex login...", output)
+def refresh_codex(path):
+    """Ensure the Codex auth file holds a currently valid access token.
+
+    ``codex login status`` reports success when an auth.json exists but doesn't
+    (currently) check expiration. So here we check the JWT expiration directly
+    to be sure.
+    """
+    try:
+        auth = json.loads(path.read_text()) if path.exists() else {}
+    except json.JSONDecodeError:
+        auth = {}
+
+    # No refresh token, so defer to codex login
+    if not auth.get("tokens", {}).get("refresh_token"):
+        LOGGER.warning("Codex: no refresh token in %s, running codex login...", path)
         subprocess.run(["codex", "login"], check=True)
+        return
+
+    access = auth.get("tokens", {}).get("access_token")
+    claims = decode_jwt_payload(access) if access else None
+    exp = claims.get("exp") if claims else None
+    expiry = datetime.fromtimestamp(exp, timezone.utc) if exp else None
+    if expiry and expiry - datetime.now(timezone.utc) > CODEX_REFRESH_WINDOW:
+        LOGGER.info("Codex: access token valid until %s", expiry)
+        return
+
+    LOGGER.info("Codex: access token expires at %s, refreshing...", expiry)
+    # This uses Python directly
+    try:
+        auth = refresh_codex_tokens(path)
+    except urllib.error.HTTPError as error:
+        if error.code not in (400, 401, 403):
+            raise
+        body = error.read().decode("utf-8", "replace")
+        LOGGER.warning(
+            "Codex: refresh token rejected (%s): %s; running codex login...",
+            error.code,
+            body,
+        )
+        subprocess.run(["codex", "login"], check=True)
+        return
+
+    access = auth.get("tokens", {}).get("access_token")
+    claims = decode_jwt_payload(access) if access else None
+    exp = claims.get("exp") if claims else None
+    expiry = datetime.fromtimestamp(exp, timezone.utc) if exp else None
+    LOGGER.info("Codex: refreshed, now valid until %s", expiry)
 
 
 def decode_jwt_payload(jwt):
@@ -236,6 +280,37 @@ def decode_jwt_payload(jwt):
         return json.loads(decoded)
     except Exception:
         return None
+
+
+def refresh_codex_tokens(path):
+    """Refresh Codex OAuth tokens and save them to ``path``.
+
+    A refresh token can be used only once, so make sure we get its replacement
+    from the response.
+    """
+    auth = json.loads(path.read_text())
+    request = urllib.request.Request(
+        CODEX_TOKEN_URL,
+        data=json.dumps(
+            {
+                "client_id": CODEX_CLIENT_ID,
+                "grant_type": "refresh_token",
+                "refresh_token": auth["tokens"]["refresh_token"],
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read())
+
+    for field in ("id_token", "access_token", "refresh_token"):
+        if payload.get(field):
+            auth["tokens"][field] = payload[field]
+    auth["last_refresh"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    write_private_text(path, json.dumps(auth, indent=2) + "\n")
+    return auth
 
 
 def convert_codex_auth_to_pi(src, dest):
