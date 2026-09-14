@@ -14,11 +14,9 @@ Overview of the flow:
     - launch container in backend
 """
 
-
 import argparse
 import atexit
 import configparser
-from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -28,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 # These vars deal with default paths and env vars. "Managed" refers to the
@@ -150,8 +149,7 @@ def fatal(message):
 
 
 def split_image_tag(reference):
-    """Split an image reference into (name, tag), where tag is None if absent.
-    """
+    """Split an image reference into (name, tag), where tag is None if absent."""
     last_segment = reference.rpartition("/")[2]
 
     # ':' only used to separate a tag if it falls in the final path segment;
@@ -243,9 +241,7 @@ class Backend:
         """Validate that the container image exists. Override in subclasses."""
         raise NotImplementedError
 
-    def build_command(
-        self, env_vars, mounts, command_args, sensitive_env_file=None
-    ):
+    def build_command(self, env_vars, mounts, command_args, sensitive_env_file=None):
         """Return the container command and arguments without executing them.
 
         `sensitive_env_file` optionally names a file containing one unquoted
@@ -265,6 +261,7 @@ class PodmanBackend(Backend):
         result = subprocess.run(
             [self.command, "image", "exists", self.args.image_name],
             capture_output=True,
+            check=False,
         )
         if result.returncode == 0:
             return
@@ -287,9 +284,7 @@ class PodmanBackend(Backend):
                 "Check your network or try 'podman pull' manually."
             )
 
-    def build_command(
-        self, env_vars, mounts, command_args, sensitive_env_file=None
-    ):
+    def build_command(self, env_vars, mounts, command_args, sensitive_env_file=None):
         """Build a Podman command, loading secrets from an optional env file."""
         args = self.args
 
@@ -344,9 +339,7 @@ class SingularityBackend(Backend):
         if not sif_path.is_file():
             fatal(f"singularity image '{self.args.sif_path}' is not a file.")
 
-    def build_command(
-        self, env_vars, mounts, command_args, sensitive_env_file=None
-    ):
+    def build_command(self, env_vars, mounts, command_args, sensitive_env_file=None):
         """Build a Singularity command, loading secrets from an optional env file."""
         args = self.args
 
@@ -798,7 +791,10 @@ class Launcher:
         """
         env = {}
 
-        for lower, upper in (("https_proxy", "HTTPS_PROXY"), ("http_proxy", "HTTP_PROXY")):
+        for lower, upper in (
+            ("https_proxy", "HTTPS_PROXY"),
+            ("http_proxy", "HTTP_PROXY"),
+        ):
             lower_val = os.environ.get(lower)
             upper_val = os.environ.get(upper)
             if lower_val or upper_val:
@@ -1218,7 +1214,9 @@ class Launcher:
             key: value for key, value in env_vars.items() if key in SENSITIVE_ENV_VARS
         }
         ordinary_env = {
-            key: value for key, value in env_vars.items() if key not in SENSITIVE_ENV_VARS
+            key: value
+            for key, value in env_vars.items()
+            if key not in SENSITIVE_ENV_VARS
         }
         sensitive_env_file = None
         sensitive_env_dir = None
