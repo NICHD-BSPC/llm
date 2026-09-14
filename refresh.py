@@ -6,11 +6,9 @@ import getpass
 import json
 import logging
 import os
-import re
 import shlex
 import subprocess
 import sys
-import tempfile
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -19,13 +17,13 @@ from pathlib import Path
 LOGGER = logging.getLogger("refresh")
 
 
-def configure_logging(verbose=False):
+def configure_logging():
     """Configure CLI logging."""
     LOGGER.handlers.clear()
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
     LOGGER.addHandler(handler)
-    LOGGER.setLevel(logging.DEBUG if verbose else logging.INFO)
+    LOGGER.setLevel(logging.INFO)
     LOGGER.propagate = False
 
 
@@ -116,7 +114,16 @@ def rsync_paths(paths, user, remote):
         if not os.path.exists(local_path):
             skipped_paths.append(path)
             continue
-        relative_paths.append(home_relative_path(path))
+
+        home_dir = os.path.abspath(os.path.expanduser("~"))
+        absolute_path = os.path.abspath(local_path)
+
+        if os.path.commonpath([home_dir, absolute_path]) != home_dir:
+            raise ValueError(
+                f"Path must be inside the home directory for batched rsync: {path}"
+            )
+        relative_path = os.path.relpath(absolute_path, home_dir)
+        relative_paths.append(relative_path)
 
     for path in skipped_paths:
         LOGGER.warning("skipping missing path: %s", path)
@@ -140,18 +147,6 @@ def rsync_paths(paths, user, remote):
         check=True,
         cwd=os.path.expanduser("~"),
     )
-
-
-def resolve_source_profile(cli_profile=None):
-    """Resolve the AWS source profile for this run.
-
-    ``--aws-profile`` or env var ``AWS_PROFILE`` can override default
-    "llm-export" profile.
-    """
-    for candidate in (cli_profile, os.environ.get("AWS_PROFILE")):
-        if candidate and candidate.strip():
-            return candidate
-    return None
 
 
 def refresh_aws_sso(profile=None):
@@ -281,7 +276,7 @@ def convert_codex_auth_to_pi(src, dest):
     """
     Upsert Codex OAuth credentials into Pi auth.json.
 
-    Pi auth.json may contain credentials for many providers, so this function
+    Pi's auth.json may contain credentials for many providers, so this function
     preserves the existing top-level object and only updates the openai-codex
     entry. If an existing Pi auth file is malformed, fail instead of replacing
     unrelated credentials.
@@ -350,7 +345,7 @@ def validate_aws_process_credentials(
 ):
     """Validate AWS process-provider credentials returned by the AWS CLI."""
     if not isinstance(creds, dict):
-        raise ValueError("AWS credential export must be a JSON object")
+        raise TypeError("AWS credential export must be a JSON object")
     if type(creds.get("Version")) is not int or creds["Version"] != 1:
         raise ValueError("AWS credential export has an unsupported Version")
     for field in ("AccessKeyId", "SecretAccessKey", "SessionToken"):
@@ -575,7 +570,6 @@ def transfer_paths(kind: str, full: bool, include_aws_export: bool = True) -> li
 def main() -> int:
     args = parse_args()
     configure_logging()
-    source_profile = resolve_source_profile(args.aws_profile)
 
     if args.show_files:
         print(
