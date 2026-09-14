@@ -318,7 +318,8 @@ class LaunchAwsEnvTests(unittest.TestCase):
                 bundle = self.write_managed_bundle(tmpdir)
                 mutate(bundle)
                 with self.patch_aws_paths(tmpdir):
-                    self.assertFalse(self.make_launcher("pi")._has_exported_aws_profile())
+                    error = self.make_launcher("pi")._validate_managed_aws_profile()
+                    self.assertIsNotNone(error)
 
     def _replace_managed_credentials(self, bundle, credentials):
         path = bundle / "credentials.json"
@@ -546,6 +547,14 @@ class SensitiveEnvironmentTests(unittest.TestCase):
                 self.assertFalse(inspected["path"].exists())
                 self.assertFalse(inspected["path"].parent.exists())
 
+    def test_singularity_command_does_not_mutate_environment(self):
+        launcher = self.make_launcher("singularity", dry_run=True)
+        env = {"HOME": "/home/devuser", "ORDINARY": "visible"}
+
+        launcher.backend.build_command(env, [], ["codex"])
+
+        self.assertEqual(env, {"HOME": "/home/devuser", "ORDINARY": "visible"})
+
     def test_dry_run_redacts_and_removes_sensitive_file(self):
         secret = "must-not-be-printed"
         launcher = self.make_launcher("podman", dry_run=True)
@@ -764,6 +773,22 @@ class MaskTests(unittest.TestCase):
             with mock.patch.object(launch.os, "getcwd", return_value=resolved):
                 launcher = launch.Launcher(
                     launch.parse_args(["--ro", "data", "shell"])
+                )
+                config = launch.SUBCOMMAND_CONFIG["shell"]
+                with mock.patch.object(launch.LOGGER, "warning") as warn:
+                    launcher.build_mounts(config, env_vars={})
+                    warn.assert_not_called()
+
+    def test_mask_and_ro_targets_do_not_warn_nested(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "secret").mkdir()
+            (Path(tmpdir) / "data").mkdir()
+            resolved = str(Path(tmpdir).resolve())
+            with mock.patch.object(launch.os, "getcwd", return_value=resolved):
+                launcher = launch.Launcher(
+                    launch.parse_args(
+                        ["--mask", "secret", "--ro", "data", "shell"]
+                    )
                 )
                 config = launch.SUBCOMMAND_CONFIG["shell"]
                 with mock.patch.object(launch.LOGGER, "warning") as warn:
