@@ -40,10 +40,10 @@ The reason we do all of this is because:
   disruptive.
 
 Your SSO profile is the *source* from which :cmd:`refresh.py` obtains
-credentials. That's what is set up below in the account provisioning. Once that
-is set up, the *managed profile* ``llm-export`` is the *destination* that
-:cmd:`refresh.py` writes. This managed profile is only used by ``launch.py``
-and ``refresh.py``.
+credentials. This SSO profile is set up below in the account provisioning. Once
+that is set up, :cmd:`refresh.py` uses it to automatically create a  *managed
+profile*, here called ``llm-export`` This managed profile is only used by
+``launch.py`` and ``refresh.py``.
 
 .. list-table:: Where should ``AWS_PROFILE`` be set?
    :header-rows: 1
@@ -70,6 +70,12 @@ and ``refresh.py``.
 Thus, a typical setup has ``AWS_PROFILE=AWSPowerUserAccess-00001`` on your
 laptop, no ``AWS_PROFILE`` on the remote host, and an automatically selected
 ``AWS_PROFILE=llm-export`` inside the container.
+
+The following diagram illustrates this behavior:
+
+
+.. image:: images/aws-profiles.excalidraw.png
+
 
 Read on for how to set this up.
 
