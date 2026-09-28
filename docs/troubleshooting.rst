@@ -34,8 +34,8 @@ the critical ones (on **each** system you are running containers on):
 .. code-block:: bash
 
    # For Claude Code / Pi with Bedrock
-   echo $CLAUDE_CODE_USE_BEDROCK   # should be 1
-   echo $AWS_PROFILE               # should be your profile name
+   echo $CLAUDE_CODE_USE_BEDROCK   # should be 1 for Claude
+   echo $AWS_PROFILE               # locally, should be your account profile. Remote, should be empty
    echo $AWS_REGION                # should be your region, e.g. us-east-1
 
    # For Pi with Bedrock
@@ -51,9 +51,9 @@ and source it or open a new terminal.
    # Codex
    ls ~/.codex/auth.json
 
-   # Claude / Pi (AWS)
-   ls ~/.aws/config
-   ls ~/.aws/credentials.json
+   # Claude / Pi managed AWS export
+   ls ~/.aws/llm-export/config
+   ls ~/.aws/llm-export/credentials.json
 
    # Claude Code config
    ls ~/.claude.json
@@ -142,17 +142,33 @@ or ``The SSO session ... has expired``.
 
       refresh.py --remote biowulf.nih.gov
 
-3. You do **not** need to restart the container. Because credential files are
-   mounted into the container, the running agent can see refreshed
-   credentials on the next request.
+3. You do **not** normally need to recreate the container. Updates are visible
+   through the managed directory mount. SDKs may cache credentials until their
+   normal refresh point, so this does not guarantee that every already-running
+   agent uses the new value immediately.
 
-4. If it has been a long time since credentials expired, the agent may have
-   given up retrying. Re-send your last prompt.
+4. Re-send your last prompt after refreshing.
 
-5. If Pi still keeps using the expired credentials, stop and restart ``pi``.
-   Some SDK/provider paths cache resolved credentials in-process, so updating
-   :file:`~/.aws/credentials.json` alone may not always be enough for an already
-   running Pi session.
+5. If the agent continues to use expired credentials, stop and restart only the
+   agent process inside the container. In an interactive shell this means exit
+   and start the agent again; if the agent is the container's main process,
+   exit and rerun :cmd:`launch.py`.
+
+**Check managed credential permissions without displaying secrets:**
+
+.. code-block:: bash
+
+   # macOS / BSD stat
+   stat -f '%Sp %N' ~/.aws ~/.aws/llm-export ~/.aws/llm-export/credentials.json
+
+   # Linux / GNU stat
+   stat -c '%A %a %n' ~/.aws ~/.aws/llm-export ~/.aws/llm-export/credentials.json
+
+The credential JSON must not be group- or world-readable (normally mode
+``0600``). A bundle created by :cmd:`refresh.py` normally has mode ``0700``.
+An existing user-managed :file:`~/.aws` directory keeps its existing mode.
+Never use :cmd:`cat` or verbose shell tracing to troubleshoot the credential
+JSON since this leaks the secrets.
 
 **Codex login failures:**
 
@@ -248,7 +264,7 @@ available on the remote host. You must also add the relevant exports
 (``CLAUDE_CODE_USE_BEDROCK``, ``AWS_REGION``, model defaults, etc.) to the
 **remote** :file:`~/.bashrc`.
 
-When :file:`~/.aws/credentials.json` is present on the remote,
+When the managed bundle under :file:`~/.aws/llm-export` is valid on the remote,
 :file:`launch.py` will automatically use the ``llm-export`` AWS profile, so
 explicitly setting ``AWS_PROFILE`` on the remote is optional.
 
@@ -362,8 +378,10 @@ useful for inspecting mounts, environment variables, and arguments:
    launch.py --dry-run claude
    launch.py --dry-run shell
 
-Compare the output against what you expect: are credential paths mounted?
-Are the right environment variables being passed? Is the image correct?
+Compare the output against what you expect: are credential paths mounted
+read-only? Is the selected profile correct? Is the image correct? Sensitive AWS
+values are intentionally omitted from command arguments; dry-run shows only the
+private temporary environment-file path, not its contents.
 
 You can also launch a ``shell`` to poke around inside the container
 interactively:

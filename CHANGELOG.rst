@@ -1,6 +1,24 @@
 Changelog
 =========
 
+2026-09-28
+----------
+
+Changed how AWS profiles work, to be more secure. Now, there is a "managed
+profile" made by ``refresh.py`` that is copied to the remote with ``refresh.py
+--remote``. When running ``launch.py``, the managed profile is mounted
+read-only into the container. The container's ``AWS_PROFILE`` is automatically
+set to this managed profile.
+
+This avoids putting the AWS SSO cache into the container.
+
+Documentation has been updated to reflect this change.
+
+The OpenAI Codex auth was also improved: turns out ``codex login`` doesn't seem
+to pay attention to the token expiration, so now we're checking that
+explicitly.
+
+
 2026-07-18
 ----------
 
