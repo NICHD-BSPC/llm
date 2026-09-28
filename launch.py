@@ -897,6 +897,19 @@ class Launcher:
                 env.setdefault(key, value)
             selected_profile = host_aws_env.get("AWS_PROFILE")
 
+            if selected_profile:
+                inherited_source = f"AWS profile '{selected_profile}'"
+            elif self._has_static_aws_credentials(env):
+                inherited_source = "static AWS credentials"
+            else:
+                inherited_source = None
+            if inherited_source:
+                LOGGER.warning(
+                    "Managed AWS profile llm-export was not found; using inherited "
+                    "%s. Run refresh.py --aws-profile PROFILE to create it.",
+                    inherited_source,
+                )
+
         if selected_profile:
             for key in AWS_STATIC_CREDENTIAL_ENV_VARS:
                 env.pop(key, None)

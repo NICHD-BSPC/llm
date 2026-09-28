@@ -105,6 +105,7 @@ class LaunchAwsEnvTests(unittest.TestCase):
                     {"PI_USE_BEDROCK": "1", "AWS_PROFILE": "host-profile"},
                     clear=True,
                 ),
+                mock.patch.object(launch.LOGGER, "warning") as warn,
             ):
                 launcher = self.make_launcher("pi")
                 env = launcher.build_env_vars()
@@ -112,6 +113,35 @@ class LaunchAwsEnvTests(unittest.TestCase):
 
         self.assertEqual(env["AWS_PROFILE"], "host-profile")
         self.assertIn((str(aws_dir), launch.CONTAINER_AWS_DIR, True), mounts)
+        warn.assert_called_once_with(
+            "Managed AWS profile llm-export was not found; using inherited "
+            "%s. Run refresh.py --aws-profile PROFILE to create it.",
+            "AWS profile 'host-profile'",
+        )
+
+    def test_inherited_static_credentials_warn_without_managed_bundle(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                self.patch_aws_paths(tmpdir),
+                mock.patch.dict(
+                    launch.os.environ,
+                    {
+                        "PI_USE_BEDROCK": "1",
+                        "AWS_ACCESS_KEY_ID": "host-key",
+                        "AWS_SECRET_ACCESS_KEY": "host-secret",
+                    },
+                    clear=True,
+                ),
+                mock.patch.object(launch.LOGGER, "warning") as warn,
+            ):
+                env = self.make_launcher("pi").build_env_vars()
+
+        self.assertEqual(env["AWS_ACCESS_KEY_ID"], "host-key")
+        warn.assert_called_once_with(
+            "Managed AWS profile llm-export was not found; using inherited "
+            "%s. Run refresh.py --aws-profile PROFILE to create it.",
+            "static AWS credentials",
+        )
 
     def test_explicit_profile_overrides_valid_managed_bundle(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -123,12 +153,14 @@ class LaunchAwsEnvTests(unittest.TestCase):
                     {"PI_USE_BEDROCK": "1", "AWS_PROFILE": "host-profile"},
                     clear=True,
                 ),
+                mock.patch.object(launch.LOGGER, "warning") as warn,
             ):
                 env = self.make_launcher(
                     "--env", "AWS_PROFILE=research", "pi"
                 ).build_env_vars()
 
         self.assertEqual(env["AWS_PROFILE"], "research")
+        warn.assert_not_called()
 
     def test_explicit_static_credentials_are_still_allowed(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -140,6 +172,7 @@ class LaunchAwsEnvTests(unittest.TestCase):
                     {"PI_USE_BEDROCK": "1", "AWS_PROFILE": "host-profile"},
                     clear=True,
                 ),
+                mock.patch.object(launch.LOGGER, "warning") as warn,
             ):
                 env = self.make_launcher(
                     "--env",
@@ -154,6 +187,7 @@ class LaunchAwsEnvTests(unittest.TestCase):
         self.assertEqual(env["AWS_ACCESS_KEY_ID"], "explicit-key")
         self.assertEqual(env["AWS_SECRET_ACCESS_KEY"], "explicit-secret")
         self.assertNotIn("AWS_PROFILE", env)
+        warn.assert_not_called()
 
     def test_bedrock_without_credentials_fails_validation(self):
         with tempfile.TemporaryDirectory() as tmpdir:

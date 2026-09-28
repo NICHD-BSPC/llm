@@ -258,6 +258,11 @@ Bedrock launches distinguish these credential sources, in order:
    complete access-key and secret-key pair inherited from the host is supported
    without an AWS mount. Partial static credentials fail validation.
 
+When either inherited fallback is used, :cmd:`launch.py` warns that the managed
+bundle is missing and suggests creating it with :cmd:`refresh.py`. Explicit
+profiles and static credentials supplied with ``--env`` do not produce this
+warning.
+
 In short:
 
 .. code-block:: text
