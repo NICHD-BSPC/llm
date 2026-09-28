@@ -33,7 +33,7 @@ from pathlib import Path, PurePosixPath
 # directory and credentials that are created for the sole purpose of mounting
 # read-only into a container.
 #
-# Profile that will be created
+# Managed profile that will be created
 AWS_EXPORT_PROFILE = "llm-export"
 
 # Where credentials/config are stored
@@ -870,58 +870,76 @@ class Launcher:
                 "refresh.py."
             )
 
+    def _managed_aws_mount(self, env):
+        """Validate and configure the managed profile, returning its mount."""
+        managed_error = self._validate_managed_aws_profile()
+        if managed_error:
+            self._invalid_managed_aws_profile(managed_error)
+        env["AWS_CONFIG_FILE"] = CONTAINER_AWS_MANAGED_CONFIG
+        return [
+            (
+                str(AWS_MANAGED_BUNDLE_DIR),
+                CONTAINER_AWS_MANAGED_BUNDLE_DIR,
+                True,
+            )
+        ]
+
     def _add_aws_environment(self, env, user_env):
-        """Select and add the effective AWS credential environment."""
+        """Apply the selected AWS auth mode and return its required mounts."""
         host_aws_env = self._host_env_with_prefixes("AWS_")
         explicit_static_creds = self._has_static_aws_credentials(user_env)
         explicit_profile = user_env.get("AWS_PROFILE")
-        selected_profile = None
 
         if explicit_static_creds:
             for key, value in host_aws_env.items():
                 if key != "AWS_PROFILE" and key not in AWS_STATIC_CREDENTIAL_ENV_VARS:
                     env.setdefault(key, value)
             env.pop("AWS_PROFILE", None)
-        elif explicit_profile:
+            return []
+
+        if explicit_profile:
             for key, value in host_aws_env.items():
                 env.setdefault(key, value)
-            selected_profile = explicit_profile
-        elif AWS_MANAGED_BUNDLE_DIR.exists():
+            for key in AWS_STATIC_CREDENTIAL_ENV_VARS:
+                env.pop(key, None)
+            if explicit_profile == AWS_EXPORT_PROFILE:
+                return self._managed_aws_mount(env)
+            if AWS_DIR.exists():
+                return [(str(AWS_DIR), CONTAINER_AWS_DIR, True)]
+            return []
+
+        if AWS_MANAGED_BUNDLE_DIR.exists():
             for key, value in host_aws_env.items():
                 if key != "AWS_PROFILE":
                     env.setdefault(key, value)
             env["AWS_PROFILE"] = AWS_EXPORT_PROFILE
-            selected_profile = AWS_EXPORT_PROFILE
-        else:
-            for key, value in host_aws_env.items():
-                env.setdefault(key, value)
-            selected_profile = host_aws_env.get("AWS_PROFILE")
-
-            if selected_profile:
-                inherited_source = f"AWS profile '{selected_profile}'"
-            elif self._has_static_aws_credentials(env):
-                inherited_source = "static AWS credentials"
-            else:
-                inherited_source = None
-            if inherited_source:
-                LOGGER.warning(
-                    "Managed AWS profile llm-export was not found; using inherited "
-                    "%s. Run refresh.py --aws-profile PROFILE to create it.",
-                    inherited_source,
-                )
-
-        if selected_profile:
             for key in AWS_STATIC_CREDENTIAL_ENV_VARS:
                 env.pop(key, None)
+            return self._managed_aws_mount(env)
 
-        if selected_profile == AWS_EXPORT_PROFILE:
-            managed_error = self._validate_managed_aws_profile()
-            if managed_error:
-                self._invalid_managed_aws_profile(managed_error)
-            env["AWS_CONFIG_FILE"] = CONTAINER_AWS_MANAGED_CONFIG
+        for key, value in host_aws_env.items():
+            env.setdefault(key, value)
+        selected_profile = host_aws_env.get("AWS_PROFILE")
+        if selected_profile:
+            inherited_source = f"AWS profile '{selected_profile}'"
+            for key in AWS_STATIC_CREDENTIAL_ENV_VARS:
+                env.pop(key, None)
+        elif self._has_static_aws_credentials(env):
+            inherited_source = "static AWS credentials"
+        else:
+            inherited_source = None
+        if inherited_source:
+            LOGGER.warning(
+                "Managed AWS profile llm-export was not found; using inherited "
+                "%s. Run refresh.py --aws-profile PROFILE to create it.",
+                inherited_source,
+            )
+        if selected_profile and AWS_DIR.exists():
+            return [(str(AWS_DIR), CONTAINER_AWS_DIR, True)]
+        return []
 
-    def build_env_vars(self):
-        """Build all environment variables for the container."""
+    def build_runtime_environment(self):
+        """Build the container environment and its required AWS mounts."""
         args = self.args
         user_env = self._parse_user_env()
 
@@ -948,25 +966,25 @@ class Launcher:
         # tool-specific host env.
         env.update(user_env)
 
+        aws_mounts = []
         if self._bedrock_enabled(env):
-            self._add_aws_environment(env, user_env)
+            aws_mounts = self._add_aws_environment(env, user_env)
 
         if args.certs:
             for var_name in CERT_FILE_ENV_VARS:
                 env.setdefault(var_name, CONTAINER_CERTS_PATH)
 
         self._validate_bedrock_env(env)
-        return env
+        return env, aws_mounts
 
-    def build_mounts(self, subcommand_config, env_vars=None):
+    def build_mounts(self, subcommand_config, aws_mounts=None):
         """Build all mounts for the container."""
         mounts = list(self._static_mounts())
 
         for tool in subcommand_config["credentials"]:
             mounts.extend(self._credential_mounts(tool))
 
-        if self._bedrock_enabled(env_vars or {}):
-            mounts.extend(self._aws_credential_mounts(env_vars or {}))
+        mounts.extend(aws_mounts or [])
 
         normalized_mounts = self._normalize_mounts(mounts)
         self._warn_nested_mounts(normalized_mounts)
@@ -1040,33 +1058,6 @@ class Launcher:
             return str(second), str(first)
 
         return None
-
-    def _aws_credential_mounts(self, env):
-        """Return read-only mounts required by the effective AWS auth mode.
-
-        - managed bundle is mounted on its own, and read-only, so other AWS
-          credentials don't make it into the container.
-        - A named (and so non-managed) profile does require the full ``~/.aws`` directory
-        - Static env var credentials are sufficient, so nothing on disk needed for them
-        """
-        profile = env.get("AWS_PROFILE")
-        if profile == AWS_EXPORT_PROFILE:
-            error = self._validate_managed_aws_profile()
-            if error:
-                self._invalid_managed_aws_profile(error)
-            return [
-                (
-                    str(AWS_MANAGED_BUNDLE_DIR),
-                    CONTAINER_AWS_MANAGED_BUNDLE_DIR,
-                    True,
-                )
-            ]
-
-        if profile and AWS_DIR.exists():
-            return [(str(AWS_DIR), CONTAINER_AWS_DIR, True)]
-
-        # Direct static credentials need no AWS credential files.
-        return []
 
     def _credential_mounts(self, tool, readonly=False):
         """Return existing host credential paths needed by ``tool``.
@@ -1160,8 +1151,8 @@ class Launcher:
 
         # Config for this subcommand (claude, codex, shell)
         subcommand_config = SUBCOMMAND_CONFIG[args.cmd]
-        env_vars = self.build_env_vars()
-        mounts = self.build_mounts(subcommand_config, env_vars)
+        env_vars, aws_mounts = self.build_runtime_environment()
+        mounts = self.build_mounts(subcommand_config, aws_mounts)
 
         # Build command args (subcommand command + any tool args from command line)
         # Special handling for shell: if args provided, use -c to execute them

@@ -9,6 +9,7 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,7 @@ def configure_logging():
     LOGGER.propagate = False
 
 
+# Managed profile that will be created
 AWS_EXPORT_PROFILE = "llm-export"
 AWS_MANAGED_BUNDLE_DIR = Path.home() / ".aws" / AWS_EXPORT_PROFILE
 AWS_CREDENTIALS_JSON = AWS_MANAGED_BUNDLE_DIR / "credentials.json"
@@ -146,21 +148,29 @@ def rsync_paths(paths, user, remote):
     )
 
 
-def refresh_aws_sso(profile=None):
-    """Check AWS SSO credentials and refresh if needed, using ``profile`` if given."""
+def aws_export_credentials(profile=None):
+    """Return validated AWS process-provider credentials."""
+    cmd = ["aws", "configure", "export-credentials", "--format", "process"]
+    if profile:
+        cmd.extend(["--profile", profile])
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    return validate_aws_process_credentials(json.loads(result.stdout))
+
+
+def ensure_aws_credentials(profile=None):
+    """Return usable credentials, logging in through SSO and retrying if needed."""
     try:
-        expiration = aws_credential_expiration(profile)
-        if expiration:
-            LOGGER.info("AWS SSO credentials expire at: %s", expiration)
-        else:
-            LOGGER.info("AWS SSO credentials have no expiration set.")
+        credentials = aws_export_credentials(profile)
     except (
         subprocess.CalledProcessError,
         json.JSONDecodeError,
         KeyError,
+        TypeError,
         ValueError,
-    ) as e:
-        LOGGER.warning("AWS credential check failed (%s), running aws sso login...", e)
+    ) as error:
+        LOGGER.warning(
+            "AWS credential check failed (%s), running aws sso login...", error
+        )
         cmd = ["aws", "sso", "login"]
         if profile:
             cmd.extend(["--profile", profile])
@@ -171,6 +181,14 @@ def refresh_aws_sso(profile=None):
                 "Unable to refresh AWS SSO credentials. Run 'aws configure sso' "
                 "if this profile is not configured, then retry."
             ) from login_error
+        credentials = aws_export_credentials(profile)
+
+    expiration = credentials.get("Expiration")
+    if expiration:
+        LOGGER.info("AWS SSO credentials expire at: %s", expiration)
+    else:
+        LOGGER.info("AWS SSO credentials have no expiration set.")
+    return credentials
 
 
 def refresh_codex(path):
@@ -329,21 +347,6 @@ def convert_codex_auth_to_pi(src, dest):
     write_private_text(dest, json.dumps(pi_data, indent=2) + "\n")
 
 
-def aws_credential_expiration(profile=None):
-    """Return the AWS credential expiration string from the AWS CLI."""
-    cmd = ["aws", "configure", "export-credentials"]
-    if profile:
-        cmd.extend(["--profile", profile])
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    creds = json.loads(result.stdout)
-    return creds.get("Expiration")
-
-
 def validate_aws_process_credentials(
     creds,
     now=None,
@@ -372,39 +375,46 @@ def validate_aws_process_credentials(
     return creds
 
 
-def export_aws_profile(profile=None):
-    """Export AWS credentials as JSON and configure the llm-export profile.
+def atomic_write_private_text(path, content):
+    """Atomically replace a private text file with mode 0600."""
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as output:
+            temporary_path = Path(output.name)
+            os.fchmod(output.fileno(), 0o600)
+            output.write(content)
+            output.flush()
+        os.replace(temporary_path, path)
+    except BaseException:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
-    ``profile`` is the *source* profile to read credentials from; the
-    destination profile is always the managed ``llm-export`` one.
-    """
 
-    # Capture the credentails with the AWS CLI, dump to json that we can mount
-    # inside container
-    cmd = ["aws", "configure", "export-credentials", "--format", "process"]
-    if profile:
-        cmd.extend(["--profile", profile])
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    creds = validate_aws_process_credentials(json.loads(result.stdout))
-
+def write_managed_aws_bundle(credentials):
+    """Atomically write the managed credentials and config."""
     aws_root = AWS_MANAGED_BUNDLE_DIR.parent
     aws_root_existed = aws_root.exists()
     aws_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     if not aws_root_existed:
         os.chmod(aws_root, 0o700)
 
-    write_private_text(AWS_CREDENTIALS_JSON, json.dumps(creds, indent=2) + "\n")
-    write_private_text(AWS_CONFIG_PATH, MANAGED_AWS_CONFIG)
-    LOGGER.info(
-        "Exported AWS credentials from source profile %s to %s",
-        profile or "(AWS CLI default)",
-        AWS_CREDENTIALS_JSON,
+    bundle_existed = AWS_MANAGED_BUNDLE_DIR.exists()
+    AWS_MANAGED_BUNDLE_DIR.mkdir(exist_ok=True, mode=0o700)
+    if not bundle_existed:
+        os.chmod(AWS_MANAGED_BUNDLE_DIR, 0o700)
+
+    atomic_write_private_text(
+        AWS_CREDENTIALS_JSON, json.dumps(credentials, indent=2) + "\n"
     )
+    atomic_write_private_text(AWS_CONFIG_PATH, MANAGED_AWS_CONFIG)
+    LOGGER.info("Wrote managed AWS credentials to %s", AWS_CREDENTIALS_JSON)
     LOGGER.info(
         "Configured credential_process in %s [profile %s]",
         AWS_CONFIG_PATH,
@@ -449,7 +459,7 @@ class _SessionCredentialProvider:
         return self._session.get_credentials()
 
 
-def bedrock_export_command(profile=None):
+def bedrock_export_command(profile=None, credential_expiration=None):
     """Return a shell command that exports a fresh Bedrock bearer token."""
     try:
         from aws_bedrock_token_generator import provide_token
@@ -461,15 +471,14 @@ def bedrock_export_command(profile=None):
         ) from exc
 
     requested_expiry = timedelta(hours=12)
-    expiration = aws_credential_expiration(profile)
-    if expiration:
-        expires_at = parse_timestamp(expiration)
+    if credential_expiration:
+        expires_at = parse_timestamp(credential_expiration)
         remaining = expires_at - datetime.now(timezone.utc)
         effective = min(requested_expiry, max(remaining, timedelta()))
         LOGGER.info(
             "Bedrock token request: 12h; AWS credentials expire at %s; "
             "max possible token duration: %s",
-            expiration,
+            credential_expiration,
             format_duration(effective),
         )
     else:
@@ -595,8 +604,12 @@ def main() -> int:
             AWS_EXPORT_PROFILE,
         )
         try:
-            refresh_aws_sso(source_profile)
-            print(bedrock_export_command(source_profile))
+            credentials = ensure_aws_credentials(source_profile)
+            print(
+                bedrock_export_command(
+                    source_profile, credentials.get("Expiration")
+                )
+            )
         except RuntimeError as exc:
             LOGGER.error("%s", exc)
             return 1
@@ -611,9 +624,9 @@ def main() -> int:
             source_profile or "(AWS CLI default)",
             AWS_EXPORT_PROFILE,
         )
-        refresh_aws_sso(source_profile)
+        credentials = ensure_aws_credentials(source_profile)
         if not args.no_export_creds:
-            export_aws_profile(source_profile)
+            write_managed_aws_bundle(credentials)
 
     if refresh_openai:
         codex_path = Path(
