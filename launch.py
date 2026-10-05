@@ -847,7 +847,8 @@ class Launcher:
     def _invalid_managed_aws_profile(self, error):
         fatal(
             f"Managed AWS profile {AWS_EXPORT_PROFILE} is invalid: {error}. "
-            "Refresh it with: refresh.py --aws-profile PROFILE"
+            "Refresh it with: refresh.py --aws-profile PROFILE. If you are on "
+            "a remote machine, this command must be run on the local machine."
         )
 
     def _validate_bedrock_env(self, env):
