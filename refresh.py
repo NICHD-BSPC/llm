@@ -6,7 +6,6 @@ import getpass
 import json
 import logging
 import os
-import re
 import shlex
 import subprocess
 import sys
@@ -19,21 +18,25 @@ from pathlib import Path
 LOGGER = logging.getLogger("refresh")
 
 
-def configure_logging(verbose=False):
+def configure_logging():
     """Configure CLI logging."""
     LOGGER.handlers.clear()
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
     LOGGER.addHandler(handler)
-    LOGGER.setLevel(logging.DEBUG if verbose else logging.INFO)
+    LOGGER.setLevel(logging.INFO)
     LOGGER.propagate = False
 
 
+# Managed profile that will be created
 AWS_EXPORT_PROFILE = "llm-export"
 AWS_MANAGED_BUNDLE_DIR = Path.home() / ".aws" / AWS_EXPORT_PROFILE
 AWS_CREDENTIALS_JSON = AWS_MANAGED_BUNDLE_DIR / "credentials.json"
 AWS_CONFIG_PATH = AWS_MANAGED_BUNDLE_DIR / "config"
-PI_DIR = Path.home() / ".pi"
+MANAGED_AWS_CONFIG = """[profile llm-export]
+credential_process = sh -c 'cat ~/.aws/llm-export/credentials.json'
+"""
+
 # This is public information; we can use it to rotate tokens ourselves rather
 # than shell out to `codex login`. Still need `codex login` for if refresh
 # token is missing.
@@ -46,7 +49,6 @@ CODEX_REFRESH_WINDOW = timedelta(days=1)
 CREDENTIAL_PATHS = {
     "codex": {
         "auth": ("~/.codex/auth.json",),
-        "config": ("~/.codex/config.toml",),
         "full": (
             "~/.codex/config.toml",
             "~/.codex/auth.json",
@@ -56,7 +58,6 @@ CREDENTIAL_PATHS = {
     },
     "claude": {
         "auth": ("~/.aws/llm-export",),
-        "config": ("~/.claude/settings.json", "~/.claude.json"),
         "full": (
             "~/.claude/settings.json",
             "~/.claude.json",
@@ -68,7 +69,6 @@ CREDENTIAL_PATHS = {
         # Include auth.json to support ChatGPT Enterprise login, where we
         # convert the codex login auth.json into something that Pi can use
         "auth": ("~/.pi/agent/auth.json", "~/.aws/llm-export"),
-        "config": ("~/.pi/agent/settings.json",),
         "full": (
             "~/.pi/agent/skills",
             "~/.pi/agent/settings.json",
@@ -80,57 +80,22 @@ CREDENTIAL_PATHS = {
 }
 
 
-def atomic_write_text(
-    path,
-    content,
-    *,
-    file_mode=None,
-    new_parent_mode=None,
-):
-    """Atomically replace a file using a temporary file in the same directory."""
+def write_private_text(path, content):
+    """Write a private file, creating its parent directory if needed."""
     parent_existed = path.parent.exists()
-    path.parent.mkdir(parents=True, exist_ok=True, mode=new_parent_mode or 0o777)
-    if new_parent_mode is not None and not parent_existed:
-        os.chmod(path.parent, new_parent_mode)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not parent_existed:
+        os.chmod(path.parent, 0o700)
 
-    temp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temp_file:
-            temp_path = Path(temp_file.name)
-            if file_mode is not None:
-                os.chmod(temp_path, file_mode)
-            elif path.exists():
-                os.chmod(temp_path, path.stat().st_mode & 0o777)
-            temp_file.write(content)
-            temp_file.flush()
-            os.fsync(temp_file.fileno())
-        os.replace(temp_path, path)
-        temp_path = None
-    finally:
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
-
-
-def home_relative_path(path):
-    """Return a path relative to the user's home directory.
-
-    Used for batching together rsync calls.
-    """
-    local_path = os.path.expanduser(path)
-    home_dir = os.path.abspath(os.path.expanduser("~"))
-    absolute_path = os.path.abspath(local_path)
-    if os.path.commonpath([home_dir, absolute_path]) != home_dir:
-        raise ValueError(
-            f"Path must be inside the home directory for batched rsync: {path}"
-        )
-    return os.path.relpath(absolute_path, home_dir)
+    # open(path, "w") leaves an existing file's mode unchanged; since these are
+    # credentials we're keeping the permissions 600 all the time.
+    with os.fdopen(
+        os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+        "w",
+        encoding="utf-8",
+    ) as output:
+        os.fchmod(output.fileno(), 0o600)
+        output.write(content)
 
 
 def rsync_paths(paths, user, remote):
@@ -148,7 +113,16 @@ def rsync_paths(paths, user, remote):
         if not os.path.exists(local_path):
             skipped_paths.append(path)
             continue
-        relative_paths.append(home_relative_path(path))
+
+        home_dir = os.path.abspath(os.path.expanduser("~"))
+        absolute_path = os.path.abspath(local_path)
+
+        if os.path.commonpath([home_dir, absolute_path]) != home_dir:
+            raise ValueError(
+                f"Path must be inside the home directory for batched rsync: {path}"
+            )
+        relative_path = os.path.relpath(absolute_path, home_dir)
+        relative_paths.append(relative_path)
 
     for path in skipped_paths:
         LOGGER.warning("skipping missing path: %s", path)
@@ -174,47 +148,47 @@ def rsync_paths(paths, user, remote):
     )
 
 
-def resolve_source_profile(cli_profile=None):
-    """Resolve the AWS source profile for this run.
-
-    ``--aws-profile`` or env var ``AWS_PROFILE`` can override default
-    "llm-export" profile.
-    """
-    for candidate in (cli_profile, os.environ.get("AWS_PROFILE")):
-        if candidate and candidate.strip():
-            return candidate
-    return None
+def aws_export_credentials(profile=None):
+    """Return validated AWS process-provider credentials."""
+    cmd = ["aws", "configure", "export-credentials", "--format", "process"]
+    if profile:
+        cmd.extend(["--profile", profile])
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    return validate_aws_process_credentials(json.loads(result.stdout))
 
 
-def with_profile(cmd, profile):
-    """Append ``--profile PROFILE`` as separate argv entries"""
-    if not profile:
-        return list(cmd)
-    return [*cmd, "--profile", profile]
-
-
-def refresh_aws_sso(profile=None):
-    """Check AWS SSO credentials and refresh if needed, using ``profile`` if given."""
+def ensure_aws_credentials(profile=None):
+    """Return usable credentials, logging in through SSO and retrying if needed."""
     try:
-        expiration = aws_credential_expiration(profile)
-        if expiration:
-            LOGGER.info("AWS SSO credentials expire at: %s", expiration)
-        else:
-            LOGGER.info("AWS SSO credentials have no expiration set.")
+        credentials = aws_export_credentials(profile)
     except (
         subprocess.CalledProcessError,
         json.JSONDecodeError,
         KeyError,
+        TypeError,
         ValueError,
-    ) as e:
-        LOGGER.warning("AWS credential check failed (%s), running aws sso login...", e)
+    ) as error:
+        LOGGER.warning(
+            "AWS credential check failed (%s), running aws sso login...", error
+        )
+        cmd = ["aws", "sso", "login"]
+        if profile:
+            cmd.extend(["--profile", profile])
         try:
-            subprocess.run(with_profile(["aws", "sso", "login"], profile), check=True)
+            subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as login_error:
             raise RuntimeError(
                 "Unable to refresh AWS SSO credentials. Run 'aws configure sso' "
                 "if this profile is not configured, then retry."
             ) from login_error
+        credentials = aws_export_credentials(profile)
+
+    expiration = credentials.get("Expiration")
+    if expiration:
+        LOGGER.info("AWS SSO credentials expire at: %s", expiration)
+    else:
+        LOGGER.info("AWS SSO credentials have no expiration set.")
+    return credentials
 
 
 def refresh_codex(path):
@@ -317,7 +291,7 @@ def convert_codex_auth_to_pi(src, dest):
     """
     Upsert Codex OAuth credentials into Pi auth.json.
 
-    Pi auth.json may contain credentials for many providers, so this function
+    Pi's auth.json may contain credentials for many providers, so this function
     preserves the existing top-level object and only updates the openai-codex
     entry. If an existing Pi auth file is malformed, fail instead of replacing
     unrelated credentials.
@@ -353,6 +327,14 @@ def convert_codex_auth_to_pi(src, dest):
                 f"Existing Pi auth.json must contain a JSON object: {dest}"
             )
 
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    if expires <= now_ms:
+        expired_at = datetime.fromtimestamp(expires / 1000, timezone.utc)
+        raise ValueError(
+            f"Codex access token in {src} expired at {expired_at}; refusing to "
+            "write it to Pi auth. Run 'codex login' and retry."
+        )
+
     pi_data["openai-codex"] = {
         "type": "oauth",
         "access": access,
@@ -362,34 +344,7 @@ def convert_codex_auth_to_pi(src, dest):
     if account_id:
         pi_data["openai-codex"]["accountId"] = account_id
 
-    atomic_write_text(
-        dest,
-        json.dumps(pi_data, indent=2) + "\n",
-        file_mode=0o600,
-        new_parent_mode=0o700,
-    )
-
-
-def update_pi_codex_auth():
-    """Upsert Codex OAuth credentials into Pi auth.json."""
-    src = Path(os.environ.get("CODEX_AUTH_PATH", Path.home() / ".codex" / "auth.json"))
-    dest = Path(
-        os.environ.get("PI_AUTH_PATH", Path.home() / ".pi" / "agent" / "auth.json")
-    )
-    convert_codex_auth_to_pi(src, dest)
-    LOGGER.info("Updated Pi Codex auth at %s", dest)
-
-
-def aws_credential_expiration(profile=None):
-    """Return the AWS credential expiration string from the AWS CLI."""
-    result = subprocess.run(
-        with_profile(["aws", "configure", "export-credentials"], profile),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    creds = json.loads(result.stdout)
-    return creds.get("Expiration")
+    write_private_text(dest, json.dumps(pi_data, indent=2) + "\n")
 
 
 def validate_aws_process_credentials(
@@ -398,7 +353,7 @@ def validate_aws_process_credentials(
 ):
     """Validate AWS process-provider credentials returned by the AWS CLI."""
     if not isinstance(creds, dict):
-        raise ValueError("AWS credential export must be a JSON object")
+        raise TypeError("AWS credential export must be a JSON object")
     if type(creds.get("Version")) is not int or creds["Version"] != 1:
         raise ValueError("AWS credential export has an unsupported Version")
     for field in ("AccessKeyId", "SecretAccessKey", "SessionToken"):
@@ -420,110 +375,46 @@ def validate_aws_process_credentials(
     return creds
 
 
-def aws_export_credentials(profile=None):
-    """Return validated AWS credentials in process-provider JSON format."""
-    result = subprocess.run(
-        with_profile(
-            ["aws", "configure", "export-credentials", "--format", "process"],
-            profile,
-        ),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return validate_aws_process_credentials(json.loads(result.stdout))
-
-
-def upsert_ini_section(path: Path, section: str, entries: dict[str, str]) -> None:
-    """Replace or append a managed INI section while preserving other sections.
-
-    If ``section`` already exists in the file at ``path``, its contents are
-    replaced with ``entries``. If it doesn't exist, it is appended at the end.
-    All other sections in the file are left untouched.
-
-    Args:
-        path: Path to the INI file (created along with parent dirs if missing).
-        section: The section name without brackets, and including "profile", e.g. "profile llm-export".
-        entries: Key/value pairs to write under the section header.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
+def atomic_write_private_text(path, content):
+    """Atomically replace a private text file with mode 0600."""
+    temporary_path = None
     try:
-        lines = path.read_text().splitlines()
-    except FileNotFoundError:
-        lines = []
-
-    # Note: we're not using configparser because it lowercases keys, strips
-    # comments, reorders sections, and doesn't round-trip formatting well — all
-    # of which matter for ~/.aws/config files you might also be editing
-    # manually.
-    section_header = f"[{section}]"
-    section_pattern = re.compile(r"^\s*\[.*\]\s*$")
-    rendered_section = [
-        section_header,
-        *[f"{key} = {value}" for key, value in entries.items()],
-    ]
-
-    output_lines = []
-    index = 0
-    replaced = False
-    while index < len(lines):
-        line = lines[index]
-        if line.strip() == section_header:
-            replaced = True
-            output_lines.extend(rendered_section)
-            index += 1
-            while index < len(lines) and not section_pattern.match(lines[index]):
-                index += 1
-            if index < len(lines) and output_lines and output_lines[-1] != "":
-                output_lines.append("")
-            continue
-
-        output_lines.append(line)
-        index += 1
-
-    if not replaced:
-        if output_lines and output_lines[-1] != "":
-            output_lines.append("")
-        output_lines.extend(rendered_section)
-
-    atomic_write_text(path, "\n".join(output_lines).rstrip() + "\n")
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as output:
+            temporary_path = Path(output.name)
+            os.fchmod(output.fileno(), 0o600)
+            output.write(content)
+            output.flush()
+        os.replace(temporary_path, path)
+    except BaseException:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
-def export_aws_profile(profile=None):
-    """Export AWS credentials as JSON and configure the llm-export profile.
-
-    ``profile`` is the *source* profile to read credentials from; the
-    destination profile is always the managed ``llm-export`` one.
-    """
-    creds = aws_export_credentials(profile)
-
+def write_managed_aws_bundle(credentials):
+    """Atomically write the managed credentials and config."""
     aws_root = AWS_MANAGED_BUNDLE_DIR.parent
     aws_root_existed = aws_root.exists()
     aws_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     if not aws_root_existed:
         os.chmod(aws_root, 0o700)
 
-    atomic_write_text(
-        AWS_CREDENTIALS_JSON,
-        json.dumps(creds, indent=2) + "\n",
-        file_mode=0o600,
-        new_parent_mode=0o700,
-    )
+    bundle_existed = AWS_MANAGED_BUNDLE_DIR.exists()
+    AWS_MANAGED_BUNDLE_DIR.mkdir(exist_ok=True, mode=0o700)
+    if not bundle_existed:
+        os.chmod(AWS_MANAGED_BUNDLE_DIR, 0o700)
 
-    # Keep the managed config and process JSON in one directory so a
-    # read-only directory mount handles atomic credential replacements.
-    upsert_ini_section(
-        AWS_CONFIG_PATH,
-        f"profile {AWS_EXPORT_PROFILE}",
-        {
-            "credential_process": ("sh -c 'cat ~/.aws/llm-export/credentials.json'"),
-        },
+    atomic_write_private_text(
+        AWS_CREDENTIALS_JSON, json.dumps(credentials, indent=2) + "\n"
     )
-    LOGGER.info(
-        "Exported AWS credentials from source profile %s to %s",
-        profile or "(AWS CLI default)",
-        AWS_CREDENTIALS_JSON,
-    )
+    atomic_write_private_text(AWS_CONFIG_PATH, MANAGED_AWS_CONFIG)
+    LOGGER.info("Wrote managed AWS credentials to %s", AWS_CREDENTIALS_JSON)
     LOGGER.info(
         "Configured credential_process in %s [profile %s]",
         AWS_CONFIG_PATH,
@@ -568,8 +459,8 @@ class _SessionCredentialProvider:
         return self._session.get_credentials()
 
 
-def bedrock_token(profile, expiry):
-    """Generate a Bedrock bearer token, scoped to ``profile`` when resolved."""
+def bedrock_export_command(profile=None, credential_expiration=None):
+    """Return a shell command that exports a fresh Bedrock bearer token."""
     try:
         from aws_bedrock_token_generator import provide_token
     except ImportError as exc:
@@ -579,42 +470,15 @@ def bedrock_token(profile, expiry):
             "https://github.com/aws/aws-bedrock-token-generator-python."
         ) from exc
 
-    if not profile:
-        return provide_token(expiry=expiry)
-
-    # botocore ships with the token generator; a per-profile session keeps the
-    # selected profile's credentials and region out of global os.environ.
-    from botocore.session import Session
-
-    session = Session(profile=profile)
-    return provide_token(
-        region=session.get_config_variable("region") or os.environ.get("AWS_REGION"),
-        aws_credentials_provider=_SessionCredentialProvider(session),
-        expiry=expiry,
-    )
-
-
-def bedrock_export_command(profile=None):
-    """Return a shell command that exports a fresh Bedrock bearer token."""
-    try:
-        import aws_bedrock_token_generator  # noqa: F401
-    except ImportError as exc:
-        raise RuntimeError(
-            "aws-bedrock-token-generator is not installed. Install it with "
-            "'pip install aws-bedrock-token-generator' or from "
-            "https://github.com/aws/aws-bedrock-token-generator-python."
-        ) from exc
-
     requested_expiry = timedelta(hours=12)
-    expiration = aws_credential_expiration(profile)
-    if expiration:
-        expires_at = parse_timestamp(expiration)
+    if credential_expiration:
+        expires_at = parse_timestamp(credential_expiration)
         remaining = expires_at - datetime.now(timezone.utc)
         effective = min(requested_expiry, max(remaining, timedelta()))
         LOGGER.info(
             "Bedrock token request: 12h; AWS credentials expire at %s; "
             "max possible token duration: %s",
-            expiration,
+            credential_expiration,
             format_duration(effective),
         )
     else:
@@ -622,7 +486,24 @@ def bedrock_export_command(profile=None):
             "Bedrock token request: 12h; AWS credentials have no reported expiration."
         )
 
-    token = bedrock_token(profile, requested_expiry)
+    if profile:
+        # `aws_bedrock_token_generator.provide_token` normally uses the
+        # process-wide AWS credential chain. Here, give it a provider backed by
+        # this session so credentials (including refreshed SSO credentials) and
+        # region come from the requested profile without changing the any
+        # AWS_PROFILE set in the environment.
+        from botocore.session import Session
+
+        session = Session(profile=profile)
+        token = provide_token(
+            region=session.get_config_variable("region")
+            or os.environ.get("AWS_REGION"),
+            aws_credentials_provider=_SessionCredentialProvider(session),
+            expiry=requested_expiry,
+        )
+    else:
+        token = provide_token(expiry=requested_expiry)
+
     return f"export AWS_BEARER_TOKEN_BEDROCK={shlex.quote(token)}"
 
 
@@ -643,7 +524,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     ap.add_argument(
         "--kind",
-        choices=("claude", "codex", "pi", "all", "bedrock"),
+        choices=("claude", "codex", "pi", "all"),
         default="all",
         help="Which credential set to sync (default: %(default)s)",
     )
@@ -652,7 +533,7 @@ def parse_args(argv=None) -> argparse.Namespace:
         action="store_true",
         help=(
             "Print a shell command that exports AWS_BEARER_TOKEN_BEDROCK "
-            "using aws-bedrock-token-generator"
+            "using aws-bedrock-token-generator. --kind and --remote are ignored."
         ),
     )
     ap.add_argument(
@@ -673,10 +554,7 @@ def parse_args(argv=None) -> argparse.Namespace:
         default=user,
         help="username for remote, defaults to %(default)s",
     )
-    args = ap.parse_args(argv)
-    if args.bedrock_export:
-        args.kind = "bedrock"
-    return args
+    return ap.parse_args(argv)
 
 
 def transfer_paths(kind: str, full: bool, include_aws_export: bool = True) -> list[str]:
@@ -694,7 +572,6 @@ def transfer_paths(kind: str, full: bool, include_aws_export: bool = True) -> li
 def main() -> int:
     args = parse_args()
     configure_logging()
-    source_profile = resolve_source_profile(args.aws_profile)
 
     if args.show_files:
         print(
@@ -711,28 +588,56 @@ def main() -> int:
                 print(f"    {path}")
         sys.exit(0)
 
-    if args.kind in ("all", "claude", "pi", "bedrock"):
+    source_profile = next(
+        (
+            candidate
+            for candidate in (args.aws_profile, os.environ.get("AWS_PROFILE"))
+            if candidate and candidate.strip()
+        ),
+        None,
+    )
+
+    if args.bedrock_export:
         LOGGER.info(
             "AWS source profile: %s; destination profile: %s",
             source_profile or "(AWS CLI default)",
             AWS_EXPORT_PROFILE,
         )
-
-    if args.kind in ("all", "claude", "pi"):
-        refresh_aws_sso(source_profile)
-        if not args.no_export_creds:
-            export_aws_profile(source_profile)
-    if args.kind in ("all", "codex", "pi"):
-        refresh_codex()
-        update_pi_codex_auth()
-    if args.kind == "bedrock":
         try:
-            refresh_aws_sso(source_profile)
-            print(bedrock_export_command(source_profile))
-        except RuntimeError as e:
-            LOGGER.error("%s", e)
+            credentials = ensure_aws_credentials(source_profile)
+            print(
+                bedrock_export_command(
+                    source_profile, credentials.get("Expiration")
+                )
+            )
+        except RuntimeError as exc:
+            LOGGER.error("%s", exc)
             return 1
         return 0
+
+    refresh_aws = args.kind in ("all", "claude", "pi")
+    refresh_openai = args.kind in ("all", "codex", "pi")
+
+    if refresh_aws:
+        LOGGER.info(
+            "AWS source profile: %s; destination profile: %s",
+            source_profile or "(AWS CLI default)",
+            AWS_EXPORT_PROFILE,
+        )
+        credentials = ensure_aws_credentials(source_profile)
+        if not args.no_export_creds:
+            write_managed_aws_bundle(credentials)
+
+    if refresh_openai:
+        codex_path = Path(
+            os.environ.get("CODEX_AUTH_PATH", Path.home() / ".codex" / "auth.json")
+        )
+        pi_auth_path = Path(
+            os.environ.get("PI_AUTH_PATH", Path.home() / ".pi" / "agent" / "auth.json")
+        )
+        refresh_codex(codex_path)
+        convert_codex_auth_to_pi(codex_path, pi_auth_path)
+        LOGGER.info("Updated Pi Codex auth at %s", pi_auth_path)
 
     paths = transfer_paths(
         args.kind,
