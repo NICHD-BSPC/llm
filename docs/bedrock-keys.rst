@@ -1,10 +1,11 @@
 Amazon Bedrock keys
 ===================
 
-Claude Code and Pi use the AWS SDK, so the setup documented elsewhere in these
-docs uses :cmd:`aws sso login`. However, not all tools use the AWS SDK. In
-those cases, you can get a short-term Bedrock token. You can use the examples
-at https://github.com/aws/aws-bedrock-token-generator-python, or use
+Claude Code and Pi normally use the AWS SDK with either the managed
+``llm-export`` profile, an explicitly selected AWS profile, or explicit static
+access keys. A Bedrock bearer token is a separate authentication mechanism for
+clients that do not use the AWS SDK profile chain. You can use the examples at
+https://github.com/aws/aws-bedrock-token-generator-python, or use
 :cmd:`refresh.py`, which implements those examples.
 
 
@@ -47,7 +48,11 @@ The usual convention is to place this token in the
    eval "$(./refresh.py --bedrock-export)"
 
 The script prints an ``export AWS_BEARER_TOKEN_BEDROCK=...`` command, and
-``eval`` runs that export in the current shell.
+``eval`` runs that export in the current shell. Treat the token as a secret: do
+not enable shell tracing, paste it into logs, or include it literally in a
+saved command. If supplied to :cmd:`launch.py` with ``--env``, its value is
+placed in the same private temporary environment file used for static AWS
+secrets and is absent from dry-run/runtime command arguments.
 
 In order to use this on a remote machine, you would need to capture the token
 and manually export it into the relevant environment, likely by copy-pasting.
