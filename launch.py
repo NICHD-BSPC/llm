@@ -14,11 +14,9 @@ Overview of the flow:
     - launch container in backend
 """
 
-
 import argparse
 import atexit
 import configparser
-from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -28,13 +26,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 # These vars deal with default paths and env vars. "Managed" refers to the
 # directory and credentials that are created for the sole purpose of mounting
 # read-only into a container.
 #
-# Profile that will be created
+# Managed profile that will be created
 AWS_EXPORT_PROFILE = "llm-export"
 
 # Where credentials/config are stored
@@ -150,8 +149,7 @@ def fatal(message):
 
 
 def split_image_tag(reference):
-    """Split an image reference into (name, tag), where tag is None if absent.
-    """
+    """Split an image reference into (name, tag), where tag is None if absent."""
     last_segment = reference.rpartition("/")[2]
 
     # ':' only used to separate a tag if it falls in the final path segment;
@@ -243,9 +241,7 @@ class Backend:
         """Validate that the container image exists. Override in subclasses."""
         raise NotImplementedError
 
-    def build_command(
-        self, env_vars, mounts, command_args, sensitive_env_file=None
-    ):
+    def build_command(self, env_vars, mounts, command_args, sensitive_env_file=None):
         """Return the container command and arguments without executing them.
 
         `sensitive_env_file` optionally names a file containing one unquoted
@@ -265,6 +261,7 @@ class PodmanBackend(Backend):
         result = subprocess.run(
             [self.command, "image", "exists", self.args.image_name],
             capture_output=True,
+            check=False,
         )
         if result.returncode == 0:
             return
@@ -287,9 +284,7 @@ class PodmanBackend(Backend):
                 "Check your network or try 'podman pull' manually."
             )
 
-    def build_command(
-        self, env_vars, mounts, command_args, sensitive_env_file=None
-    ):
+    def build_command(self, env_vars, mounts, command_args, sensitive_env_file=None):
         """Build a Podman command, loading secrets from an optional env file."""
         args = self.args
 
@@ -297,7 +292,7 @@ class PodmanBackend(Backend):
         if sensitive_env_file:
             env_args.extend(["--env-file", sensitive_env_file])
         mount_args = self.build_mount_args(mounts)
-        mask_args = self.build_mask_args(getattr(args, "mask_targets", []))
+        mask_args = self.build_mask_args(args.mask_targets)
 
         # The image bakes its home directory and dotfiles as UID/GID 1000
         # (see USER_UID/USER_GID in the Dockerfile). Map the current host user
@@ -344,9 +339,7 @@ class SingularityBackend(Backend):
         if not sif_path.is_file():
             fatal(f"singularity image '{self.args.sif_path}' is not a file.")
 
-    def build_command(
-        self, env_vars, mounts, command_args, sensitive_env_file=None
-    ):
+    def build_command(self, env_vars, mounts, command_args, sensitive_env_file=None):
         """Build a Singularity command, loading secrets from an optional env file."""
         args = self.args
 
@@ -369,16 +362,17 @@ class SingularityBackend(Backend):
         # entire /tmp dir, which are both otherwise default behavior for
         # Singularity.
         #
-        home = env_vars.pop("HOME")
+        home = env_vars["HOME"]
+        runtime_env = {key: value for key, value in env_vars.items() if key != "HOME"}
         tmp = tempfile.mkdtemp()
         atexit.register(shutil.rmtree, tmp, ignore_errors=True)
 
-        env_args = self.build_env_args(env_vars)
+        env_args = self.build_env_args(runtime_env)
         if sensitive_env_file:
             env_args.extend(["--env-file", sensitive_env_file])
 
         mount_args = self.build_mount_args(mounts)
-        mask_args = self.build_mask_args(getattr(args, "mask_targets", []))
+        mask_args = self.build_mask_args(args.mask_targets)
 
         # fmt: off
         return [
@@ -465,16 +459,21 @@ class Launcher:
             for mount_spec in [*env_mount_specs, *cli_mount_specs]
         ]
 
+        args.mask_targets = []
+        args.nested_ok_targets = set()
         self._resolve_masks()
         self._resolve_ro_mounts()
 
-        if args.path_prepend and PurePosixPath(args.path_prepend).is_absolute():
-            if not self._container_path_is_mounted(args.path_prepend):
-                fatal(
-                    f"--path-prepend path '{args.path_prepend}' is absolute but is "
-                    "not available in the container. Add a matching --mount or "
-                    "use a workspace-relative path."
-                )
+        if (
+            args.path_prepend
+            and PurePosixPath(args.path_prepend).is_absolute()
+            and not self._container_path_is_mounted(args.path_prepend)
+        ):
+            fatal(
+                f"--path-prepend path '{args.path_prepend}' is absolute but is "
+                "not available in the container. Add a matching --mount or "
+                "use a workspace-relative path."
+            )
 
     def setup_codex_config(self):
         """Create default ~/.codex dir"""
@@ -552,89 +551,48 @@ class Launcher:
                 return env_path
         fatal(f"--conda-env named '{name}' not found in 'conda env list'.")
 
-    def _resolve_masks(self):
-        """Resolve --mask paths to container targets to be shadowed.
-
-        Each mask is a path (relative to cwd, or an absolute path inside cwd)
-        pointing at a subdirectory of the mounted workspace whose contents
-        should be hidden from the container.
-        """
-        args = self.args
+    def _resolve_workspace_subpath(self, spec, option):
+        """Resolve a workspace subpath to its host and container paths."""
         host_cwd = os.getcwd()
-        container_workspace = args.workspace_mount or host_cwd
+        host_path = Path(spec).expanduser()
+        if not host_path.is_absolute():
+            host_path = Path(host_cwd) / host_path
+        host_path = host_path.resolve()
 
-        args.mask_targets = []
-
-        if not args.mask:
-            return
-
-        for spec in args.mask:
-            host_path = Path(spec).expanduser()
-            if not host_path.is_absolute():
-                host_path = Path(host_cwd) / host_path
-            host_path = host_path.resolve()
-
-            if not self._is_path_inside_workspace(host_path, host_cwd):
-                fatal(
-                    f"--mask path '{spec}' must be inside the current working "
-                    f"directory ('{host_cwd}')."
-                )
-            if host_path == Path(host_cwd).resolve():
+        if not self._is_path_inside_workspace(host_path, host_cwd):
+            fatal(
+                f"{option} path '{spec}' must be inside the current working "
+                f"directory ('{host_cwd}')."
+            )
+        if host_path == Path(host_cwd).resolve():
+            if option == "--mask":
                 fatal("--mask cannot mask the entire working directory.")
-            if not host_path.exists():
-                fatal(f"--mask path not found: {spec}")
+            fatal(
+                "--ro cannot cover the entire working directory "
+                "(use --global-read-only)."
+            )
+        if not host_path.exists():
+            fatal(f"{option} path not found: {spec}")
 
-            rel = os.path.relpath(host_path, host_cwd)
-            container_target = str(PurePosixPath(container_workspace) / rel)
+        container_workspace = self.args.workspace_mount or host_cwd
+        rel = os.path.relpath(host_path, host_cwd)
+        container_target = str(PurePosixPath(container_workspace) / rel)
+        return host_path, container_target
+
+    def _resolve_masks(self):
+        """Resolve --mask paths to container targets to be shadowed."""
+        args = self.args
+        for spec in args.mask:
+            _, container_target = self._resolve_workspace_subpath(spec, "--mask")
             if container_target not in args.mask_targets:
                 args.mask_targets.append(container_target)
+                args.nested_ok_targets.add(container_target)
 
     def _resolve_ro_mounts(self):
-        """Mount workspace subdirectories read-only over the otherwise-rw
-        workspace.
-
-        Each supplied --ro path is a subdirectory of the mounted workspace
-        whose contents should be read-only from the container. Its real
-        contents are bind-mounted read-only on top of the read-write workspace
-        mount.
-
-        Order matters, we need this ro mount to happen *after* the rw mount.
-
-        The respective container targets are recorded in
-        ``args.nested_ok_targets`` and exempt from the nested-mount warning --
-        since after all we are intentionally nesting mounts.
-        """
+        """Mount selected workspace subdirectories read-only."""
         args = self.args
-        host_cwd = os.getcwd()
-        container_workspace = args.workspace_mount or host_cwd
-
-        if not hasattr(args, "nested_ok_targets"):
-            args.nested_ok_targets = set(getattr(args, "mask_targets", []))
-
-        if not args.ro:
-            return
-
         for spec in args.ro:
-            host_path = Path(spec).expanduser()
-            if not host_path.is_absolute():
-                host_path = Path(host_cwd) / host_path
-            host_path = host_path.resolve()
-
-            if not self._is_path_inside_workspace(host_path, host_cwd):
-                fatal(
-                    f"--ro path '{spec}' must be inside the current working "
-                    f"directory ('{host_cwd}')."
-                )
-            if host_path == Path(host_cwd).resolve():
-                fatal(
-                    "--ro cannot cover the entire working directory "
-                    "(use --global-read-only)."
-                )
-            if not host_path.exists():
-                fatal(f"--ro path not found: {spec}")
-
-            rel = os.path.relpath(host_path, host_cwd)
-            container_target = str(PurePosixPath(container_workspace) / rel)
+            host_path, container_target = self._resolve_workspace_subpath(spec, "--ro")
             args.extra_mounts.append((str(host_path), container_target, True))
             args.nested_ok_targets.add(container_target)
 
@@ -798,7 +756,10 @@ class Launcher:
         """
         env = {}
 
-        for lower, upper in (("https_proxy", "HTTPS_PROXY"), ("http_proxy", "HTTP_PROXY")):
+        for lower, upper in (
+            ("https_proxy", "HTTPS_PROXY"),
+            ("http_proxy", "HTTP_PROXY"),
+        ):
             lower_val = os.environ.get(lower)
             upper_val = os.environ.get(upper)
             if lower_val or upper_val:
@@ -883,10 +844,6 @@ class Launcher:
             return "managed credentials are expired"
         return None
 
-    def _has_exported_aws_profile(self):
-        """Return True only when the managed profile passes inspection."""
-        return self._validate_managed_aws_profile() is None
-
     def _invalid_managed_aws_profile(self, error):
         fatal(
             f"Managed AWS profile {AWS_EXPORT_PROFILE} is invalid: {error}. "
@@ -913,8 +870,76 @@ class Launcher:
                 "refresh.py."
             )
 
-    def build_env_vars(self):
-        """Build all environment variables for the container."""
+    def _managed_aws_mount(self, env):
+        """Validate and configure the managed profile, returning its mount."""
+        managed_error = self._validate_managed_aws_profile()
+        if managed_error:
+            self._invalid_managed_aws_profile(managed_error)
+        env["AWS_CONFIG_FILE"] = CONTAINER_AWS_MANAGED_CONFIG
+        return [
+            (
+                str(AWS_MANAGED_BUNDLE_DIR),
+                CONTAINER_AWS_MANAGED_BUNDLE_DIR,
+                True,
+            )
+        ]
+
+    def _add_aws_environment(self, env, user_env):
+        """Apply the selected AWS auth mode and return its required mounts."""
+        host_aws_env = self._host_env_with_prefixes("AWS_")
+        explicit_static_creds = self._has_static_aws_credentials(user_env)
+        explicit_profile = user_env.get("AWS_PROFILE")
+
+        if explicit_static_creds:
+            for key, value in host_aws_env.items():
+                if key != "AWS_PROFILE" and key not in AWS_STATIC_CREDENTIAL_ENV_VARS:
+                    env.setdefault(key, value)
+            env.pop("AWS_PROFILE", None)
+            return []
+
+        if explicit_profile:
+            for key, value in host_aws_env.items():
+                env.setdefault(key, value)
+            for key in AWS_STATIC_CREDENTIAL_ENV_VARS:
+                env.pop(key, None)
+            if explicit_profile == AWS_EXPORT_PROFILE:
+                return self._managed_aws_mount(env)
+            if AWS_DIR.exists():
+                return [(str(AWS_DIR), CONTAINER_AWS_DIR, True)]
+            return []
+
+        if AWS_MANAGED_BUNDLE_DIR.exists():
+            for key, value in host_aws_env.items():
+                if key != "AWS_PROFILE":
+                    env.setdefault(key, value)
+            env["AWS_PROFILE"] = AWS_EXPORT_PROFILE
+            for key in AWS_STATIC_CREDENTIAL_ENV_VARS:
+                env.pop(key, None)
+            return self._managed_aws_mount(env)
+
+        for key, value in host_aws_env.items():
+            env.setdefault(key, value)
+        selected_profile = host_aws_env.get("AWS_PROFILE")
+        if selected_profile:
+            inherited_source = f"AWS profile '{selected_profile}'"
+            for key in AWS_STATIC_CREDENTIAL_ENV_VARS:
+                env.pop(key, None)
+        elif self._has_static_aws_credentials(env):
+            inherited_source = "static AWS credentials"
+        else:
+            inherited_source = None
+        if inherited_source:
+            LOGGER.warning(
+                "Managed AWS profile llm-export was not found; using inherited "
+                "%s. Run refresh.py --aws-profile PROFILE to create it.",
+                inherited_source,
+            )
+        if selected_profile and AWS_DIR.exists():
+            return [(str(AWS_DIR), CONTAINER_AWS_DIR, True)]
+        return []
+
+    def build_runtime_environment(self):
+        """Build the container environment and its required AWS mounts."""
         args = self.args
         user_env = self._parse_user_env()
 
@@ -941,74 +966,25 @@ class Launcher:
         # tool-specific host env.
         env.update(user_env)
 
+        aws_mounts = []
         if self._bedrock_enabled(env):
-            host_aws_env = self._host_env_with_prefixes("AWS_")
-            explicit_static_creds = self._has_static_aws_credentials(user_env)
-            explicit_profile = user_env.get("AWS_PROFILE")
-            selected_profile = None
-
-            # This is the primary logic for figuring out which credentials to use.
-
-            if explicit_static_creds:
-
-                # "Static" as in, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.
-                #
-                # This wins even over --env AWS_PROFILE=...
-                #
-                # In this case, ignore any profile env vars or other static-related env vars.
-                for key, value in host_aws_env.items():
-                    if (
-                        key != "AWS_PROFILE"
-                        and key not in AWS_STATIC_CREDENTIAL_ENV_VARS
-                    ):
-                        env.setdefault(key, value)
-                env.pop("AWS_PROFILE", None)
-
-            elif explicit_profile:
-                # That is, --env AWS_PROFILE=...
-                for key, value in host_aws_env.items():
-                    env.setdefault(key, value)
-                selected_profile = explicit_profile
-            elif AWS_MANAGED_BUNDLE_DIR.exists():
-                # Host AWS_PROFILE is used for refresh.py. A managed bundle
-                # wins for launch.py; --env AWS_PROFILE should be explicitly
-                # used if you want different behavior.
-                for key, value in host_aws_env.items():
-                    if key != "AWS_PROFILE":
-                        env.setdefault(key, value)
-                env["AWS_PROFILE"] = AWS_EXPORT_PROFILE
-                selected_profile = AWS_EXPORT_PROFILE
-            else:
-                for key, value in host_aws_env.items():
-                    env.setdefault(key, value)
-                selected_profile = host_aws_env.get("AWS_PROFILE")
-
-            if selected_profile:
-                for key in AWS_STATIC_CREDENTIAL_ENV_VARS:
-                    env.pop(key, None)
-
-            if selected_profile == AWS_EXPORT_PROFILE:
-                managed_error = self._validate_managed_aws_profile()
-                if managed_error:
-                    self._invalid_managed_aws_profile(managed_error)
-                env["AWS_CONFIG_FILE"] = CONTAINER_AWS_MANAGED_CONFIG
+            aws_mounts = self._add_aws_environment(env, user_env)
 
         if args.certs:
             for var_name in CERT_FILE_ENV_VARS:
                 env.setdefault(var_name, CONTAINER_CERTS_PATH)
 
         self._validate_bedrock_env(env)
-        return env
+        return env, aws_mounts
 
-    def build_mounts(self, subcommand_config, env_vars=None):
+    def build_mounts(self, subcommand_config, aws_mounts=None):
         """Build all mounts for the container."""
         mounts = list(self._static_mounts())
 
         for tool in subcommand_config["credentials"]:
             mounts.extend(self._credential_mounts(tool))
 
-        if self._bedrock_enabled(env_vars or {}):
-            mounts.extend(self._aws_credential_mounts(env_vars or {}))
+        mounts.extend(aws_mounts or [])
 
         normalized_mounts = self._normalize_mounts(mounts)
         self._warn_nested_mounts(normalized_mounts)
@@ -1041,8 +1017,8 @@ class Launcher:
         Mounts whose container target is an intentionally-nested target, from
         --ro or --mask, are ignored since nesting is their whole purpose.
         """
-        # --mask and --ro paths should have been added to self.nested_ok_targets
-        nested_ok = getattr(self.args, "nested_ok_targets", set())
+        # --mask and --ro paths should have been added to nested_ok_targets.
+        nested_ok = self.args.nested_ok_targets
         for index, (host_path, container_path, _) in enumerate(mounts):
             for other_host_path, other_container_path, _ in mounts[index + 1 :]:
                 # nested_container is (parent, child)
@@ -1082,33 +1058,6 @@ class Launcher:
             return str(second), str(first)
 
         return None
-
-    def _aws_credential_mounts(self, env):
-        """Return read-only mounts required by the effective AWS auth mode.
-
-        - managed bundle is mounted on its own, and read-only, so other AWS
-          credentials don't make it into the container.
-        - A named (and so non-managed) profile does require the full ``~/.aws`` directory
-        - Static env var credentials are sufficient, so nothing on disk needed for them
-        """
-        profile = env.get("AWS_PROFILE")
-        if profile == AWS_EXPORT_PROFILE:
-            error = self._validate_managed_aws_profile()
-            if error:
-                self._invalid_managed_aws_profile(error)
-            return [
-                (
-                    str(AWS_MANAGED_BUNDLE_DIR),
-                    CONTAINER_AWS_MANAGED_BUNDLE_DIR,
-                    True,
-                )
-            ]
-
-        if profile and AWS_DIR.exists():
-            return [(str(AWS_DIR), CONTAINER_AWS_DIR, True)]
-
-        # Direct static credentials need no AWS credential files.
-        return []
 
     def _credential_mounts(self, tool, readonly=False):
         """Return existing host credential paths needed by ``tool``.
@@ -1202,8 +1151,8 @@ class Launcher:
 
         # Config for this subcommand (claude, codex, shell)
         subcommand_config = SUBCOMMAND_CONFIG[args.cmd]
-        env_vars = self.build_env_vars()
-        mounts = self.build_mounts(subcommand_config, env_vars)
+        env_vars, aws_mounts = self.build_runtime_environment()
+        mounts = self.build_mounts(subcommand_config, aws_mounts)
 
         # Build command args (subcommand command + any tool args from command line)
         # Special handling for shell: if args provided, use -c to execute them
@@ -1218,21 +1167,17 @@ class Launcher:
             key: value for key, value in env_vars.items() if key in SENSITIVE_ENV_VARS
         }
         ordinary_env = {
-            key: value for key, value in env_vars.items() if key not in SENSITIVE_ENV_VARS
+            key: value
+            for key, value in env_vars.items()
+            if key not in SENSITIVE_ENV_VARS
         }
         sensitive_env_file = None
         sensitive_env_dir = None
-        cleanup_sensitive_env = None
         try:
-            # Write to file and always clean up afterwards
             if sensitive_env:
                 sensitive_env_file, sensitive_env_dir = self._write_sensitive_env_file(
                     sensitive_env
                 )
-                cleanup_sensitive_env = lambda: shutil.rmtree(
-                    sensitive_env_dir, ignore_errors=True
-                )
-                atexit.register(cleanup_sensitive_env)
             cmd = self.backend.build_command(
                 ordinary_env, mounts, command_args, sensitive_env_file
             )
@@ -1242,9 +1187,8 @@ class Launcher:
             else:
                 subprocess.run(cmd, check=True)
         finally:
-            if cleanup_sensitive_env:
-                cleanup_sensitive_env()
-                atexit.unregister(cleanup_sensitive_env)
+            if sensitive_env_dir:
+                shutil.rmtree(sensitive_env_dir, ignore_errors=True)
 
 
 def build_parser():

@@ -77,8 +77,10 @@ class LaunchAwsEnvTests(unittest.TestCase):
                 ),
             ):
                 launcher = self.make_launcher("pi")
-                env = launcher.build_env_vars()
-                mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["pi"], env)
+                env, aws_mounts = launcher.build_runtime_environment()
+                mounts = launcher.build_mounts(
+                    launch.SUBCOMMAND_CONFIG["pi"], aws_mounts
+                )
 
         self.assertEqual(env["AWS_PROFILE"], "llm-export")
         self.assertEqual(
@@ -105,13 +107,45 @@ class LaunchAwsEnvTests(unittest.TestCase):
                     {"PI_USE_BEDROCK": "1", "AWS_PROFILE": "host-profile"},
                     clear=True,
                 ),
+                mock.patch.object(launch.LOGGER, "warning") as warn,
             ):
                 launcher = self.make_launcher("pi")
-                env = launcher.build_env_vars()
-                mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["pi"], env)
+                env, aws_mounts = launcher.build_runtime_environment()
+                mounts = launcher.build_mounts(
+                    launch.SUBCOMMAND_CONFIG["pi"], aws_mounts
+                )
 
         self.assertEqual(env["AWS_PROFILE"], "host-profile")
         self.assertIn((str(aws_dir), launch.CONTAINER_AWS_DIR, True), mounts)
+        warn.assert_called_once_with(
+            "Managed AWS profile llm-export was not found; using inherited "
+            "%s. Run refresh.py --aws-profile PROFILE to create it.",
+            "AWS profile 'host-profile'",
+        )
+
+    def test_inherited_static_credentials_warn_without_managed_bundle(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                self.patch_aws_paths(tmpdir),
+                mock.patch.dict(
+                    launch.os.environ,
+                    {
+                        "PI_USE_BEDROCK": "1",
+                        "AWS_ACCESS_KEY_ID": "host-key",
+                        "AWS_SECRET_ACCESS_KEY": "host-secret",
+                    },
+                    clear=True,
+                ),
+                mock.patch.object(launch.LOGGER, "warning") as warn,
+            ):
+                env = self.make_launcher("pi").build_runtime_environment()[0]
+
+        self.assertEqual(env["AWS_ACCESS_KEY_ID"], "host-key")
+        warn.assert_called_once_with(
+            "Managed AWS profile llm-export was not found; using inherited "
+            "%s. Run refresh.py --aws-profile PROFILE to create it.",
+            "static AWS credentials",
+        )
 
     def test_explicit_profile_overrides_valid_managed_bundle(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -123,12 +157,14 @@ class LaunchAwsEnvTests(unittest.TestCase):
                     {"PI_USE_BEDROCK": "1", "AWS_PROFILE": "host-profile"},
                     clear=True,
                 ),
+                mock.patch.object(launch.LOGGER, "warning") as warn,
             ):
                 env = self.make_launcher(
                     "--env", "AWS_PROFILE=research", "pi"
-                ).build_env_vars()
+                ).build_runtime_environment()[0]
 
         self.assertEqual(env["AWS_PROFILE"], "research")
+        warn.assert_not_called()
 
     def test_explicit_static_credentials_are_still_allowed(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -140,6 +176,7 @@ class LaunchAwsEnvTests(unittest.TestCase):
                     {"PI_USE_BEDROCK": "1", "AWS_PROFILE": "host-profile"},
                     clear=True,
                 ),
+                mock.patch.object(launch.LOGGER, "warning") as warn,
             ):
                 env = self.make_launcher(
                     "--env",
@@ -149,11 +186,12 @@ class LaunchAwsEnvTests(unittest.TestCase):
                     "--env",
                     "AWS_SECRET_ACCESS_KEY=explicit-secret",
                     "pi",
-                ).build_env_vars()
+                ).build_runtime_environment()[0]
 
         self.assertEqual(env["AWS_ACCESS_KEY_ID"], "explicit-key")
         self.assertEqual(env["AWS_SECRET_ACCESS_KEY"], "explicit-secret")
         self.assertNotIn("AWS_PROFILE", env)
+        warn.assert_not_called()
 
     def test_bedrock_without_credentials_fails_validation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -164,7 +202,7 @@ class LaunchAwsEnvTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     self.make_launcher(
                         "--env", "PI_USE_BEDROCK=1", "pi"
-                    ).build_env_vars()
+                    ).build_runtime_environment()[0]
 
     def test_explicit_managed_profile_uses_bundle_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -179,7 +217,7 @@ class LaunchAwsEnvTests(unittest.TestCase):
                     "--env",
                     "AWS_PROFILE=llm-export",
                     "pi",
-                ).build_env_vars()
+                ).build_runtime_environment()[0]
 
         self.assertEqual(env["AWS_CONFIG_FILE"], launch.CONTAINER_AWS_MANAGED_CONFIG)
 
@@ -187,13 +225,11 @@ class LaunchAwsEnvTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle_dir = self.write_managed_bundle(tmpdir)
             with self.patch_aws_paths(tmpdir):
-                launcher = self.make_launcher("pi")
                 config = launch.SUBCOMMAND_CONFIG["pi"]
-                without_bedrock = launcher.build_mounts(config, {})
-                with_bedrock = launcher.build_mounts(
-                    config,
-                    {"PI_USE_BEDROCK": "1", "AWS_PROFILE": "llm-export"},
-                )
+                without_bedrock = self.make_launcher("pi").build_mounts(config, [])
+                launcher = self.make_launcher("--env", "PI_USE_BEDROCK=1", "pi")
+                _, aws_mounts = launcher.build_runtime_environment()
+                with_bedrock = launcher.build_mounts(config, aws_mounts)
 
         self.assertNotIn(
             launch.CONTAINER_AWS_MANAGED_BUNDLE_DIR,
@@ -218,10 +254,13 @@ class LaunchAwsEnvTests(unittest.TestCase):
             aws_dir = Path(tmpdir) / ".aws"
             aws_dir.mkdir()
             with self.patch_aws_paths(tmpdir):
-                launcher = self.make_launcher("pi")
+                launcher = self.make_launcher(
+                    "--env", "PI_USE_BEDROCK=1",
+                    "--env", "AWS_PROFILE=research", "pi",
+                )
+                _, aws_mounts = launcher.build_runtime_environment()
                 mounts = launcher.build_mounts(
-                    launch.SUBCOMMAND_CONFIG["pi"],
-                    {"PI_USE_BEDROCK": "1", "AWS_PROFILE": "research"},
+                    launch.SUBCOMMAND_CONFIG["pi"], aws_mounts
                 )
 
         self.assertIn((str(aws_dir), "/home/devuser/.aws", True), mounts)
@@ -231,14 +270,14 @@ class LaunchAwsEnvTests(unittest.TestCase):
             aws_dir = Path(tmpdir) / ".aws"
             aws_dir.mkdir()
             with self.patch_aws_paths(tmpdir):
-                launcher = self.make_launcher("pi")
+                launcher = self.make_launcher(
+                    "--env", "PI_USE_BEDROCK=1",
+                    "--env", "AWS_ACCESS_KEY_ID=key",
+                    "--env", "AWS_SECRET_ACCESS_KEY=secret", "pi",
+                )
+                _, aws_mounts = launcher.build_runtime_environment()
                 mounts = launcher.build_mounts(
-                    launch.SUBCOMMAND_CONFIG["pi"],
-                    {
-                        "PI_USE_BEDROCK": "1",
-                        "AWS_ACCESS_KEY_ID": "key",
-                        "AWS_SECRET_ACCESS_KEY": "secret",
-                    },
+                    launch.SUBCOMMAND_CONFIG["pi"], aws_mounts
                 )
 
         self.assertNotIn("/home/devuser/.aws", [mount[1] for mount in mounts])
@@ -264,7 +303,7 @@ class LaunchAwsEnvTests(unittest.TestCase):
                     clear=True,
                 ),
             ):
-                env = self.make_launcher("pi").build_env_vars()
+                env = self.make_launcher("pi").build_runtime_environment()[0]
 
         self.assertNotIn("AWS_PROFILE", env)
         self.assertEqual(env["AWS_ACCESS_KEY_ID"], "host-key")
@@ -318,7 +357,8 @@ class LaunchAwsEnvTests(unittest.TestCase):
                 bundle = self.write_managed_bundle(tmpdir)
                 mutate(bundle)
                 with self.patch_aws_paths(tmpdir):
-                    self.assertFalse(self.make_launcher("pi")._has_exported_aws_profile())
+                    error = self.make_launcher("pi")._validate_managed_aws_profile()
+                    self.assertIsNotNone(error)
 
     def _replace_managed_credentials(self, bundle, credentials):
         path = bundle / "credentials.json"
@@ -331,6 +371,22 @@ class LaunchAwsEnvTests(unittest.TestCase):
         credentials.update(updates)
         self._replace_managed_credentials(bundle, credentials)
 
+    def test_managed_profile_is_validated_once_per_environment_build(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.write_managed_bundle(tmpdir)
+            with (
+                self.patch_aws_paths(tmpdir),
+                mock.patch.dict(launch.os.environ, {}, clear=True),
+            ):
+                launcher = self.make_launcher("--env", "PI_USE_BEDROCK=1", "pi")
+                with mock.patch.object(
+                    launcher,
+                    "_validate_managed_aws_profile",
+                    wraps=launcher._validate_managed_aws_profile,
+                ) as validate:
+                    launcher.build_runtime_environment()
+        validate.assert_called_once_with()
+
     def test_valid_managed_profile_is_selected(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self.write_managed_bundle(tmpdir)
@@ -340,7 +396,7 @@ class LaunchAwsEnvTests(unittest.TestCase):
             ):
                 env = self.make_launcher(
                     "--env", "PI_USE_BEDROCK=1", "pi"
-                ).build_env_vars()
+                ).build_runtime_environment()[0]
         self.assertEqual(env["AWS_PROFILE"], "llm-export")
 
     def test_invalid_automatic_managed_profile_fails_without_static_fallback(self):
@@ -362,7 +418,7 @@ class LaunchAwsEnvTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     self.make_launcher(
                         "--env", "PI_USE_BEDROCK=1", "pi"
-                    ).build_env_vars()
+                    ).build_runtime_environment()[0]
 
     def test_invalid_managed_files_do_not_block_other_explicit_modes(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -375,12 +431,12 @@ class LaunchAwsEnvTests(unittest.TestCase):
                 profile_env = self.make_launcher(
                     "--env", "PI_USE_BEDROCK=1",
                     "--env", "AWS_PROFILE=research", "pi",
-                ).build_env_vars()
+                ).build_runtime_environment()[0]
                 static_env = self.make_launcher(
                     "--env", "PI_USE_BEDROCK=1",
                     "--env", "AWS_ACCESS_KEY_ID=key",
                     "--env", "AWS_SECRET_ACCESS_KEY=secret", "pi",
-                ).build_env_vars()
+                ).build_runtime_environment()[0]
 
         self.assertEqual(profile_env["AWS_PROFILE"], "research")
         self.assertEqual(static_env["AWS_ACCESS_KEY_ID"], "key")
@@ -440,12 +496,12 @@ class AwsCredentialModeMatrixTests(unittest.TestCase):
                         launcher = self.make_launcher(*argv)
                         if expected == "failure":
                             with self.assertRaises(SystemExit):
-                                launcher.build_env_vars()
+                                launcher.build_runtime_environment()[0]
                             continue
 
-                        env = launcher.build_env_vars()
+                        env, aws_mounts = launcher.build_runtime_environment()
                         mounts = launcher.build_mounts(
-                            launch.SUBCOMMAND_CONFIG[cmd], env
+                            launch.SUBCOMMAND_CONFIG[cmd], aws_mounts
                         )
 
                     aws_targets = [
@@ -478,8 +534,10 @@ class AwsCredentialModeMatrixTests(unittest.TestCase):
             clear=True,
         ):
             launcher = self.make_launcher("codex")
-            env = launcher.build_env_vars()
-            mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["codex"], env)
+            env, aws_mounts = launcher.build_runtime_environment()
+            mounts = launcher.build_mounts(
+                launch.SUBCOMMAND_CONFIG["codex"], aws_mounts
+            )
 
         self.assertNotIn("AWS_PROFILE", env)
         self.assertNotIn("AWS_ACCESS_KEY_ID", env)
@@ -498,7 +556,7 @@ class SensitiveEnvironmentTests(unittest.TestCase):
 
     def run_launcher(self, launcher, env_vars, subprocess_effect=None):
         with (
-            mock.patch.object(launcher, "build_env_vars", return_value=env_vars),
+            mock.patch.object(launcher, "build_runtime_environment", return_value=(env_vars, [])),
             mock.patch.object(launcher, "build_mounts", return_value=[]),
             mock.patch.object(launcher, "setup_codex_config"),
             mock.patch.object(launcher.backend, "check_availability"),
@@ -546,6 +604,14 @@ class SensitiveEnvironmentTests(unittest.TestCase):
                 self.assertFalse(inspected["path"].exists())
                 self.assertFalse(inspected["path"].parent.exists())
 
+    def test_singularity_command_does_not_mutate_environment(self):
+        launcher = self.make_launcher("singularity", dry_run=True)
+        env = {"HOME": "/home/devuser", "ORDINARY": "visible"}
+
+        launcher.backend.build_command(env, [], ["codex"])
+
+        self.assertEqual(env, {"HOME": "/home/devuser", "ORDINARY": "visible"})
+
     def test_dry_run_redacts_and_removes_sensitive_file(self):
         secret = "must-not-be-printed"
         launcher = self.make_launcher("podman", dry_run=True)
@@ -553,11 +619,14 @@ class SensitiveEnvironmentTests(unittest.TestCase):
         with (
             mock.patch.object(
                 launcher,
-                "build_env_vars",
-                return_value={
-                    "HOME": "/home/devuser",
-                    "AWS_SECRET_ACCESS_KEY": secret,
-                },
+                "build_runtime_environment",
+                return_value=(
+                    {
+                        "HOME": "/home/devuser",
+                        "AWS_SECRET_ACCESS_KEY": secret,
+                    },
+                    [],
+                ),
             ),
             mock.patch.object(launcher, "build_mounts", return_value=[]),
             contextlib.redirect_stdout(stdout),
@@ -767,7 +836,23 @@ class MaskTests(unittest.TestCase):
                 )
                 config = launch.SUBCOMMAND_CONFIG["shell"]
                 with mock.patch.object(launch.LOGGER, "warning") as warn:
-                    launcher.build_mounts(config, env_vars={})
+                    launcher.build_mounts(config, aws_mounts=[])
+                    warn.assert_not_called()
+
+    def test_mask_and_ro_targets_do_not_warn_nested(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "secret").mkdir()
+            (Path(tmpdir) / "data").mkdir()
+            resolved = str(Path(tmpdir).resolve())
+            with mock.patch.object(launch.os, "getcwd", return_value=resolved):
+                launcher = launch.Launcher(
+                    launch.parse_args(
+                        ["--mask", "secret", "--ro", "data", "shell"]
+                    )
+                )
+                config = launch.SUBCOMMAND_CONFIG["shell"]
+                with mock.patch.object(launch.LOGGER, "warning") as warn:
+                    launcher.build_mounts(config, aws_mounts=[])
                     warn.assert_not_called()
 
     def test_global_read_only_marks_workspace_read_only(self):
