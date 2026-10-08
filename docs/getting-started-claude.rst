@@ -26,6 +26,8 @@ and you can authenticate.
    walkthrough. This includes setting up your group for access, installing AWS
    CLI v2, and authenticating. You should be able to successfully log in on
    your local machine with :cmd:`aws sso login`.
+2. Confirm that ``AWS_PROFILE`` is set on the local host machine. Under most
+   circumstances it should NOT be set on the remote.
 
 Step 2. Export env vars
 -----------------------
@@ -54,7 +56,6 @@ Export these environment variables, for example in :file:`~/.bashrc`:
       export ANTHROPIC_DEFAULT_HAIKU_MODEL="us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
       # These should have been exported already during the previous step
-      export AWS_PROFILE="AWSPowerUserAccess-00001"  # use your own account here
       export AWS_REGION=us-east-1
 
 .. tip::
@@ -104,9 +105,10 @@ order to be able to use `codex login`.
    - The default podman image was downloaded if needed, a container was created
    - The :file:`~/.claude.json` file and any existing :file:`~/.claude` directory was mounted into the container
    - Host variables starting with ``CLAUDE_CODE`` or ``ANTHROPIC`` were passed through to the container
-   - Because ``CLAUDE_CODE_USE_BEDROCK=1`` was set, :file:`~/.aws` and relevant
-     host ``AWS_*`` settings were also passed through to the container so
-     Claude could use AWS credentials.
+   - Because ``CLAUDE_CODE_USE_BEDROCK=1`` was set, the valid managed
+     :file:`~/.aws/llm-export` bundle was mounted read-only and selected as the
+     ``llm-export`` profile. Other AWS profiles and the SSO cache were not
+     exposed to the container.
 
 
 Step 4. Claude Code remote (Singularity)
@@ -142,18 +144,15 @@ Step 4. Claude Code remote (Singularity)
 .. details:: What did this do?
 
    - :file:`refresh.py` ran :cmd:`aws sso login` if needed, then exported the
-     current short-lived AWS session credentials to
-     :file:`~/.aws/credentials.json` on the remote and configured the
-     ``llm-export`` profile in :file:`~/.aws/config` to read them via
-     ``credential_process``.
+     current short-lived AWS session credentials and managed profile config to
+     :file:`~/.aws/llm-export` on the remote.
    - :file:`launch.py` detected that you're running on Linux so Singularity is the appropriate container runtime
    - The default Singularity image was downloaded
    - Similar to running locally in a Podman container, the appropriate configs
      were mounted into the running Singularity container. With
-     ``CLAUDE_CODE_USE_BEDROCK=1``, that includes :file:`~/.aws`; if no
-     ``AWS_PROFILE`` is set on the remote host, :file:`launch.py` will
-     automatically use the ``llm-export`` profile when
-     :file:`~/.aws/credentials.json` is present.
+     ``CLAUDE_CODE_USE_BEDROCK=1``, :file:`launch.py` automatically selects and
+     read-only mounts the :file:`~/.aws/llm-export` bundle when no explicit AWS
+     profile or static credentials are supplied.
 
 Step 5. Configure Claude Code
 -----------------------------
