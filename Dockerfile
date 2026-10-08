@@ -15,7 +15,7 @@ ARG TARGETARCH
 ARG TARGETPLATFORM
 
 LABEL org.opencontainers.image.source="${REPOSITORY_URL}" \
-      org.opencontainers.image.description="LLM agent container with Claude Code, Codex, and Pi"
+      org.opencontainers.image.description="LLM agent container with Claude Code, Codex, Pi, and OMP"
 
 # The following --mount... construct lets us pass in temporary secrets (here,
 # enterprise certs) at build time without letting them leak into the built
@@ -127,9 +127,18 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   # Pi installation from official docs \
   npm install -g @earendil-works/pi-coding-agent && \
   \
+  # OMP installation from the latest GitHub release \
+  OMP_ASSET="omp-linux-${NODE_ARCH}" && \
+  OMP_RELEASE="$(curl -fsSL --connect-timeout 10 --max-time 60 https://api.github.com/repos/can1357/oh-my-pi/releases/latest)" && \
+  OMP_URL="$(printf '%s' "${OMP_RELEASE}" | jq -er --arg asset "${OMP_ASSET}" '.assets[] | select(.name == $asset) | .browser_download_url')" && \
+  OMP_SHA256="$(printf '%s' "${OMP_RELEASE}" | jq -er --arg asset "${OMP_ASSET}" '.assets[] | select(.name == $asset) | .digest | sub("^sha256:"; "")')" && \
+  curl -fsSL --connect-timeout 10 --speed-limit 1024 --speed-time 30 "${OMP_URL}" -o /tmp/omp && \
+  echo "${OMP_SHA256}  /tmp/omp" | sha256sum -c - && \
+  install -m 0755 /tmp/omp /usr/local/bin/omp && \
+  rm -f /tmp/omp && \
+  \
   # Clean up npm cache \
   rm -r /home/${USERNAME}/.npm
-
 
 RUN mkdir -p \
       /workspace \

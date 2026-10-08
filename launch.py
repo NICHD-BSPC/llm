@@ -16,6 +16,7 @@ Overview of the flow:
 
 import argparse
 import atexit
+import base64
 import configparser
 import json
 import logging
@@ -65,6 +66,7 @@ SENSITIVE_ENV_VARS = {
     "AWS_SESSION_TOKEN",
     "AWS_SECURITY_TOKEN",
     "AWS_BEARER_TOKEN_BEDROCK",
+    "OPENAI_CODEX_OAUTH_TOKEN",
 }
 
 # Hard-coded credential and config paths.
@@ -75,14 +77,21 @@ CREDENTIAL_PATHS = {
         "~/.claude.json",
     ),
     "pi": ("~/.pi",),
+    "omp": ("~/.omp",),
     "aws": ("~/.aws",),
 }
+
+# Codex's ChatGPT login. omp can't read ~/.codex/auth.json directly, but it
+# accepts the access token (a JWT) for its "openai-codex" provider via this env
+# var.
+CODEX_AUTH_PATH = Path.home() / ".codex" / "auth.json"
+CODEX_TOKEN_ENV_VAR = "OPENAI_CODEX_OAUTH_TOKEN"
 
 # Unique config for each subcommand
 SUBCOMMAND_CONFIG = {
     "shell": {
         "command": ["/bin/bash"],
-        "credentials": ["codex", "claude", "pi"],
+        "credentials": ["codex", "claude", "pi", "omp"],
     },
     "codex": {
         "command": ["codex", "--sandbox", "danger-full-access"],
@@ -95,6 +104,10 @@ SUBCOMMAND_CONFIG = {
     "pi": {
         "command": ["pi"],
         "credentials": ["pi"],
+    },
+    "omp": {
+        "command": ["omp"],
+        "credentials": ["omp"],
     },
 }
 
@@ -125,6 +138,7 @@ DEFAULT_IMAGE_TAGS = {
     "codex": "codex-latest",
     "claude": "claude-latest",
     "pi": "pi-latest",
+    "omp": "omp-latest",
 }
 DEFAULT_CERTS_ENV_VAR = "LLM_DEVCONTAINER_CERTS"
 DEFAULT_MOUNTS_ENV_VAR = "LLM_DEVCONTAINER_MOUNTS"
@@ -501,6 +515,13 @@ class Launcher:
             pi_dir.mkdir(parents=True, exist_ok=True)
             LOGGER.info("Created directory: %s", pi_dir)
 
+    def setup_omp_config(self):
+        """Create the OMP config root so it can be mounted into the container."""
+        omp_dir = Path.home() / ".omp"
+        if not omp_dir.exists():
+            omp_dir.mkdir(parents=True, exist_ok=True)
+            LOGGER.info("Created directory: %s", omp_dir)
+
     def _check_conda_env_arch(self, conda_path):
         """Fail if the env's python is a Mach-O binary (which won't run in Linux container)."""
         python_bin = conda_path / "bin" / "python"
@@ -769,16 +790,58 @@ class Launcher:
 
         return env
 
+    def _codex_oauth_env(self):
+        """Return omp's openai-codex token env var from the host's Codex login.
+
+        Returns an empty dict (with a warning where useful) if the host has no
+        usable, unexpired Codex access token. Expiry is checked explicitly
+        because ``codex login`` doesn't. refresh.py renews the token.
+        """
+        try:
+            auth = json.loads(CODEX_AUTH_PATH.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            LOGGER.info("No Codex login at %s; skipping OpenAI auth.", CODEX_AUTH_PATH)
+            return {}
+        except (OSError, ValueError):
+            LOGGER.warning("Could not read Codex auth file %s", CODEX_AUTH_PATH)
+            return {}
+
+        try:
+            access = auth["tokens"]["access_token"]
+            payload = access.split(".")[1]
+            padded = payload + "=" * (-len(payload) % 4)
+            expiry = datetime.fromtimestamp(
+                json.loads(base64.urlsafe_b64decode(padded))["exp"], timezone.utc
+            )
+        except (KeyError, IndexError, TypeError, AttributeError, ValueError, OSError):
+            LOGGER.warning("No valid Codex access token in %s", CODEX_AUTH_PATH)
+            return {}
+
+        if expiry <= datetime.now(timezone.utc):
+            LOGGER.warning(
+                "Codex access token expired at %s; not passing it to the "
+                "container. Run refresh.py --kind codex.",
+                expiry,
+            )
+            return {}
+        return {CODEX_TOKEN_ENV_VAR: access}
+
     def _bedrock_enabled(self, env):
         """Return True when the effective env enables Amazon Bedrock."""
         if self.args.cmd == "pi":
             return env.get("PI_USE_BEDROCK") == "1"
         if self.args.cmd == "claude":
             return env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
+        if self.args.cmd == "omp":
+            return env.get("OMP_USE_BEDROCK") == "1"
         if self.args.cmd == "shell":
-            return (
-                env.get("CLAUDE_CODE_USE_BEDROCK") == "1"
-                or env.get("PI_USE_BEDROCK") == "1"
+            return any(
+                env.get(key) == "1"
+                for key in (
+                    "CLAUDE_CODE_USE_BEDROCK",
+                    "PI_USE_BEDROCK",
+                    "OMP_USE_BEDROCK",
+                )
             )
         return False
 
@@ -847,7 +910,8 @@ class Launcher:
     def _invalid_managed_aws_profile(self, error):
         fatal(
             f"Managed AWS profile {AWS_EXPORT_PROFILE} is invalid: {error}. "
-            "Refresh it with: refresh.py --aws-profile PROFILE"
+            "Refresh it with: refresh.py --aws-profile PROFILE. If you are on "
+            "a remote machine, this command must be run on the local machine."
         )
 
     def _validate_bedrock_env(self, env):
@@ -859,8 +923,13 @@ class Launcher:
         ):
             if self.args.cmd == "pi":
                 required_flag = "PI_USE_BEDROCK=1"
+            elif self.args.cmd == "omp":
+                required_flag = "OMP_USE_BEDROCK=1"
             elif self.args.cmd == "shell":
-                required_flag = "CLAUDE_CODE_USE_BEDROCK=1 or PI_USE_BEDROCK=1"
+                required_flag = (
+                    "CLAUDE_CODE_USE_BEDROCK=1, PI_USE_BEDROCK=1, or "
+                    "OMP_USE_BEDROCK=1"
+                )
             else:
                 required_flag = "CLAUDE_CODE_USE_BEDROCK=1"
             fatal(
@@ -956,8 +1025,12 @@ class Launcher:
 
         if self.args.cmd in {"claude", "shell"}:
             env.update(self._host_env_with_prefixes("CLAUDE_CODE", "ANTHROPIC_"))
-        if self.args.cmd in {"pi", "shell"}:
+        if self.args.cmd in {"pi", "omp", "shell"}:
             env.update(self._host_env_with_prefixes("PI_"))
+        if self.args.cmd in {"omp", "shell"}:
+            env.update(self._host_env_with_prefixes("OMP_"))
+        if self.args.cmd in {"omp", "shell"}:
+            env.update(self._codex_oauth_env())
 
         # Pass through proxy env vars
         env.update(self._proxy_env_vars())
@@ -1144,12 +1217,14 @@ class Launcher:
                 self.setup_claude_config()
             if args.cmd in {"pi", "shell"}:
                 self.setup_pi_config()
+            if args.cmd in {"omp", "shell"}:
+                self.setup_omp_config()
             if args.cmd in {"codex", "shell"}:
                 self.setup_codex_config()
             self.backend.check_availability()
             self.backend.validate_image()
 
-        # Config for this subcommand (claude, codex, shell)
+        # Config for the selected subcommand.
         subcommand_config = SUBCOMMAND_CONFIG[args.cmd]
         env_vars, aws_mounts = self.build_runtime_environment()
         mounts = self.build_mounts(subcommand_config, aws_mounts)

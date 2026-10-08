@@ -33,6 +33,7 @@ echo "AWS_REGION: ${AWS_REGION:-NOT_SET}"
 echo "AWS_PROFILE: ${AWS_PROFILE:-NOT_SET}"
 echo "CLAUDE_CODE_USE_BEDROCK: ${CLAUDE_CODE_USE_BEDROCK:-NOT_SET}"
 echo "PI_USE_BEDROCK: ${PI_USE_BEDROCK:-NOT_SET}"
+echo "OMP_USE_BEDROCK: ${OMP_USE_BEDROCK:-NOT_SET}"
 echo "PATH: $PATH"
 echo ""
 
@@ -58,6 +59,12 @@ else
     echo "✗ ~/.pi does not exist"
 fi
 
+if [ -d ~/.omp ]; then
+    echo "✓ ~/.omp exists"
+else
+    echo "✗ ~/.omp does not exist"
+fi
+
 if [ -f ~/.claude.json ]; then
     echo "✓ ~/.claude.json exists"
 else
@@ -65,7 +72,7 @@ else
 fi
 
 BEDROCK_ENABLED=0
-if [ "${CLAUDE_CODE_USE_BEDROCK:-0}" = "1" ] || [ "${PI_USE_BEDROCK:-0}" = "1" ]; then
+if [ "${CLAUDE_CODE_USE_BEDROCK:-0}" = "1" ] || [ "${PI_USE_BEDROCK:-0}" = "1" ] || [ "${OMP_USE_BEDROCK:-0}" = "1" ]; then
     BEDROCK_ENABLED=1
 fi
 
@@ -169,7 +176,7 @@ echo ""
 
 # 9. Available Commands
 echo "--- Available Commands ---"
-for cmd in python python3 git bash node npm pi; do
+for cmd in python python3 git bash node npm pi omp; do
     if command -v $cmd &> /dev/null; then
         version=$($cmd --version 2>&1 | head -1 || echo "unknown")
         echo "✓ $cmd: $version"

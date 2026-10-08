@@ -460,10 +460,13 @@ class AwsCredentialModeMatrixTests(unittest.TestCase):
             ("explicit static with managed", "valid", None, "complete", "static"),
             ("partial static", "absent", None, "partial", "failure"),
         )
-        for cmd in ("claude", "pi", "shell"):
-            bedrock_key = (
-                "CLAUDE_CODE_USE_BEDROCK" if cmd == "claude" else "PI_USE_BEDROCK"
-            )
+        bedrock_keys = {
+            "claude": "CLAUDE_CODE_USE_BEDROCK",
+            "pi": "PI_USE_BEDROCK",
+            "omp": "OMP_USE_BEDROCK",
+            "shell": "OMP_USE_BEDROCK",
+        }
+        for cmd, bedrock_key in bedrock_keys.items():
             for name, managed, profile, static, expected in scenarios:
                 with (
                     self.subTest(cmd=cmd, scenario=name),
@@ -521,6 +524,7 @@ class AwsCredentialModeMatrixTests(unittest.TestCase):
                         self.assertNotIn("AWS_PROFILE", env)
                         self.assertEqual(env["AWS_ACCESS_KEY_ID"], "explicit-key")
                         self.assertEqual(aws_targets, [])
+
 
     def test_codex_does_not_inherit_bedrock_aws_environment(self):
         with mock.patch.dict(
@@ -684,6 +688,7 @@ class ImageTagResolutionTests(unittest.TestCase):
             ("pi", "pi-latest"),
             ("codex", "codex-latest"),
             ("claude", "claude-latest"),
+            ("omp", "omp-latest"),
             ("shell", "latest"),
         ):
             args = self.parse("--backend", "podman", cmd)

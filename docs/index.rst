@@ -17,6 +17,8 @@ When everything is set up, usage looks like this:
    launch.py codex   # run Codex in a container
    launch.py claude  # or Claude Code
    launch.py pi      # or pi
+   launch.py omp     # or OMP
+
 
 Or, to use on a remote machine:
 
@@ -27,7 +29,7 @@ Or, to use on a remote machine:
    refresh.py --remote $REMOTE_HOST
 
    # then log in to the remote host and run:
-   launch.py codex  # or claude or pi
+   launch.py codex  # or claude, pi, or omp
 
 You can hide directories or make them read-only; you can mount conda
 environments to make tools available inside the container; you can mount
@@ -49,6 +51,7 @@ what it wants:
 - `Codex CLI <https://developers.openai.com/codex/cli>`__, using models hosted by OpenAI enterprise using `ChatGPT Enterprise <https://openai.com/chatgpt/enterprise/>`__ authentication or `Amazon Bedrock <https://aws.amazon.com/bedrock/>`__ using `AWS SSO <https://aws.amazon.com/iam/identity-center/>`__.
 - `Claude Code CLI <https://code.claude.com/docs/en/overview>`__, using models hosted by Amazon Bedrock using AWS SSO.
 - `Pi coding agent <https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent>`__, also using models hosted by Amazon Bedrock using AWS SSO.
+- `OMP <https://github.com/can1357/oh-my-pi>`__, using models hosted by Amazon Bedrock through the same AWS SSO credentials.
 
 **Multiple container runtimes** for different systems:
 

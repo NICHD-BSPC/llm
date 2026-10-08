@@ -186,18 +186,19 @@ CLI's own profiles.
 Runs the agent inside a container, assuming credentials are already available,
 e.g., by running :ref:`refresh`.
 
-- Starts :cmd:`codex`, :cmd:`claude`, :cmd:`pi`, or an interactive shell in a container
+- Starts :cmd:`codex`, :cmd:`claude`, :cmd:`pi`, :cmd:`omp`, or an interactive shell in a container
 - Passes through mounts, env vars, cert bundles, and optional conda environments
 - Detects Podman vs Singularity, or accepts an explicit backend
 - Defaults to automatically pulling the latest container for the launched
   harness, published by this repo to GitHub Container Registry
   (https://ghcr.io/nichd-bspc/llm). Each harness has its own ``latest`` tag
-  (``codex-latest``, ``claude-latest``, ``pi-latest``) that only moves when
-  that harness changes version, so you don't pull a fresh image every day when
-  the harness is unchanged. The ``shell`` subcommand uses the overall
-  ``latest`` tag. Use ``--tag`` to pick a different tag (e.g. ``--tag latest``
-  for the latest overall image, or ``--tag codex-0.125.0`` to pin a version),
-  or ``--image-name`` / ``--sif-path`` for full control.
+  (``codex-latest``, ``claude-latest``, ``pi-latest``, and ``omp-latest``) that
+  only moves when that harness changes version, so you don't pull a fresh image
+  every day if the harness is unchanged. The ``shell`` subcommand uses the
+  overall ``latest`` tag though, so that will change every day. Use ``--tag``
+  to pick a different tag (e.g. ``--tag latest`` for the latest overall image, or
+  ``--tag codex-0.125.0`` to pin a version), or ``--image-name`` / ``--sif-path``
+  for full control.
 - By default, mounts the current working directory and only the
   credential/config paths relevant to the called tool
 
@@ -212,13 +213,23 @@ into :file:`/home/devuser` inside the container when they exist:
 - :cmd:`launch.py codex`: :file:`~/.codex`
 - :cmd:`launch.py claude`: :file:`~/.claude` and :file:`~/.claude.json`
 - :cmd:`launch.py pi`: :file:`~/.pi`
-- :cmd:`launch.py shell`: :file:`~/.codex`, :file:`~/.claude`, :file:`~/.claude.json`, and :file:`~/.pi`
+- :cmd:`launch.py omp`: :file:`~/.omp`
+- :cmd:`launch.py shell`: :file:`~/.codex`, :file:`~/.claude`,
+  :file:`~/.claude.json`, :file:`~/.pi`, and :file:`~/.omp`
+
+For ``omp`` and ``shell``, the Codex access token in :file:`~/.codex/auth.json`
+is additionally passed as ``OPENAI_CODEX_OAUTH_TOKEN`` (via the private
+environment file, like other secrets) so OMP can use its ``openai-codex``
+provider. The token is read at launch; if it is expired, it is skipped with
+a warning. Run :cmd:`refresh.py --kind codex` to renew it. OMP prefers a stored
+``/login`` credential over this variable.
 
 Amazon Bedrock credential mounts are added under these circumstances:
 
 - ``claude``: when ``CLAUDE_CODE_USE_BEDROCK=1``
 - ``pi``: when ``PI_USE_BEDROCK=1``
-- ``shell``: when ``CLAUDE_CODE_USE_BEDROCK=1`` or ``PI_USE_BEDROCK=1``
+- ``omp``: when ``OMP_USE_BEDROCK=1``
+- ``shell``: when any of those three variables is ``1``
 
 If the managed bundle under :file:`~/.aws/llm-export` is valid, ``launch.py``
 automatically uses the ``llm-export`` profile unless an AWS profile or static
@@ -289,14 +300,14 @@ Example usage
 .. note::
 
    Unless noted otherwise, these examples use Codex for simplicity. Replace
-   ``codex`` with ``claude``, ``pi``, or ``shell`` as needed.
+   ``codex`` with ``claude``, ``pi``, ``omp``, or ``shell`` as needed.
 
 Basic usage
 ^^^^^^^^^^^
 
 .. note::
 
-   Any arguments that come **before** the tool (codex/claude/pi) are interpreted as arguments for ``launch.py``.
+   Any arguments that come **before** the tool (codex/claude/pi/omp) are interpreted as arguments for ``launch.py``.
 
    Any arguments that come **after** the tool are interpreted as arguments for the tool.
 
@@ -500,21 +511,22 @@ default in the container:
 
 - ``HOME`` – set to ``/home/devuser``
 - ``USER``, ``LOGNAME``, ``USERNAME`` – set to ``devuser``
-- ``TOOL`` – the subcommand being run (e.g., ``codex``, ``claude``, ``pi``); this is only used for information
+- ``TOOL`` – the subcommand being run (``codex``, ``claude``, ``pi``, ``omp``, or ``shell``); this is only used for information
 - ``HOST_MOUNT_DIR`` – the current working directory on the host
 - ``PATH`` – constructed from the base Ubuntu PATH plus ``/home/devuser/.local/bin``, with optional prepends from ``--conda-env`` or ``--path-prepend``
 
 **Tool-specific inherited variables:**
 
 - For ``claude`` and ``shell``: All host environment variables starting with ``CLAUDE_CODE`` or ``ANTHROPIC_``
-- For ``pi`` and ``shell``: All host environment variables starting with ``PI_``
-- For ``claude``, ``pi``, and ``shell``: When Bedrock is enabled (via
-  ``CLAUDE_CODE_USE_BEDROCK=1`` or ``PI_USE_BEDROCK=1``): Host environment
-  variables starting with ``AWS_``. If ``AWS_PROFILE`` is set or the automatic
-  ``llm-export`` profile is in use, direct static credential variables are not
-  sent to the container so that the selected profile's ``credential_process``
-  works properly. Sensitive AWS values that are sent use a private temporary
-  environment file and do not appear in container-runtime command arguments.
+- For ``pi``, ``omp``, and ``shell``: All host environment variables starting with ``PI_``
+- For ``omp`` and ``shell``: All host environment variables starting with ``OMP_``
+- For ``claude``, ``pi``, ``omp``, and ``shell``: When Bedrock is enabled via
+  the corresponding launcher switch: Host environment variables starting with
+  ``AWS_``. If ``AWS_PROFILE`` is set or the automatic ``llm-export`` profile
+  is in use, direct static credential variables are not sent to the container
+  so that the selected profile's ``credential_process`` works properly.
+  Sensitive AWS values that are sent use a private temporary environment file
+  and do not appear in container-runtime command arguments.
 
 **Certificate variables (when** ``--certs`` **is provided):**
 
