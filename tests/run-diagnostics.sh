@@ -6,6 +6,7 @@
 # 2. Codex mode (ask AI to run and report)
 # 3. Pi mode (ask AI to run and report)
 # 4. Claude mode (ask AI to run and report)
+# 5. OMP mode (ask AI to run and report)
 
 set -euo pipefail
 
@@ -47,6 +48,7 @@ Modes:
   codex   - Ask Codex to run diagnostics and summarize
   pi      - Ask Pi to run diagnostics and summarize
   claude  - Ask Claude to run diagnostics and summarize
+  omp     - Ask OMP to run diagnostics and summarize
   all     - Run all modes sequentially
 
 Options:
@@ -72,6 +74,9 @@ Examples:
 
   # Run Pi diagnostics with Bedrock enabled explicitly
   $0 -e PI_USE_BEDROCK=1 -e AWS_PROFILE=my-aws-profile pi podman
+
+  # Run OMP diagnostics with Bedrock enabled explicitly
+  $0 -e OMP_USE_BEDROCK=1 -e AWS_PROFILE=my-aws-profile omp podman
 
   # Run all diagnostics with singularity
   $0 -e CLAUDE_CODE_USE_BEDROCK=1 -e AWS_PROFILE=my-aws-profile all singularity
@@ -171,6 +176,18 @@ run_pi_diagnostics() {
         pi -p "$PROMPT"
 }
 
+run_omp_diagnostics() {
+    print_header "OMP Mode: AI-Assisted Diagnostics"
+    print_warning "This will launch OMP and ask it to run diagnostics."
+    echo ""
+
+    python "$LAUNCH_PY" \
+        --backend "$BACKEND" \
+        ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"} \
+        ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
+        omp -p "$PROMPT"
+}
+
 run_claude_diagnostics() {
     print_header "Claude Mode: AI-Assisted Diagnostics"
 
@@ -196,6 +213,9 @@ case "$MODE" in
     pi)
         run_pi_diagnostics
         ;;
+    omp)
+        run_omp_diagnostics
+        ;;
     claude)
         run_claude_diagnostics
         ;;
@@ -210,7 +230,11 @@ case "$MODE" in
         wait_for_continue
         run_pi_diagnostics
         echo ""
-        print_info "Pi diagnostics complete. Press Enter to continue to Claude..."
+        print_info "Pi diagnostics complete. Press Enter to continue to OMP..."
+        wait_for_continue
+        run_omp_diagnostics
+        echo ""
+        print_info "OMP diagnostics complete. Press Enter to continue to Claude..."
         wait_for_continue
         run_claude_diagnostics
         ;;

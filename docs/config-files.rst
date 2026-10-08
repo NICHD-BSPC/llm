@@ -197,6 +197,44 @@ credentials cannot shadow the profile's provider. Explicit static credentials
 supplied with ``--env`` are a separate supported mode and take precedence over
 profile auto-selection.
 
+Configure OMP
+-------------
+
+:file:`~/.omp` contains OMP settings, sessions, caches, and stored credentials.
+It is mounted read-write into containers started with :cmd:`launch.py omp` or
+:cmd:`launch.py shell`, so settings changed inside the container persist on the
+host.
+
+OMP's global settings file is :file:`~/.omp/agent/config.yml`. Project settings
+can go in :file:`.omp/config.yml` in the working directory. You can use the
+following commands to inspect the effective settings and their location:
+
+.. code-block:: bash
+
+   launch.py shell
+
+   # then, in the container
+   omp config path
+   omp config list
+
+OMP supports Amazon Bedrock directly through the standard AWS credential chain.
+:cmd:`launch.py` looks for the ``OMP_USE_BEDROCK=1`` env var, so you'd need at
+least:
+
+.. code-block:: bash
+
+   export OMP_USE_BEDROCK=1
+   export AWS_REGION=us-east-1
+   refresh.py
+   launch.py omp
+
+``launch.py omp`` passes both ``OMP_*`` variables and OMP's compatible ``PI_*``
+settings variables from the host.
+
+See `OMP settings <https://github.com/can1357/oh-my-pi/blob/main/docs/settings.md>`__,
+`OMP providers <https://github.com/can1357/oh-my-pi/blob/main/docs/providers.md>`__,
+and `OMP model configuration <https://github.com/can1357/oh-my-pi/blob/main/docs/models.md>`__.
+
 Configure Pi
 ------------
 

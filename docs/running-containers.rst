@@ -32,12 +32,12 @@ Without a container, agent tools generally have read access to the entire host
 filesystem. If you have PII or sensitive information anywhere on the system, it
 could potentially be exposed to agents.
 
-Codex and Claude Code both support sandboxing. Pi does not. The configuration
-of sandboxes can be finicky, and varies by harness. In practice, using
-a sandbox still requires vigilant monitoring of the model's requests and
-careful management of allow/deny lists in respective agents' config files to
-avoid exposing private information. With no standardized config format, it's
-tricky to maintain this.
+Codex and Claude Code both support sandboxing. Pi and omp do not. Even with
+a sandbox, the configuration of sandboxes can be finicky, and varies by
+harness. In practice, using a sandbox still requires vigilant monitoring of the
+model's requests and careful management of allow/deny lists in respective
+agents' config files to avoid exposing private information. With no
+standardized config format, it's tricky to maintain this.
 
 The primary challenge is that these tools usually need access to standard
 binaries like :cmd:`git` and :cmd:`ls`, which are outside the working directory
@@ -93,7 +93,7 @@ This repo uses GitHub Actions to automatically build images on each change to
 the code and tests those images (to the extent that it can, without real
 credentials to test models). The workflow also runs on a daily schedule, so the
 images are rebuilt regularly even when the code hasn't changed. This picks up
-new releases of Codex, Claude Code, and Pi, as well as upstream package and
+new releases of Codex, Claude Code, Pi, and OMP, as well as upstream package and
 base-image updates.
 
 .. note::
@@ -106,8 +106,8 @@ The `main workflow
 builds a Podman container using the `Dockerfile
 <https://github.com/nichd-bspc/llm/tree/main/Dockerfile>`__ as the
 specification (which, among other things, includes installation of Codex,
-Claude Code, and Pi). It saves this as a Docker Archive tarball, which is then
-passed to Singularity to convert it into the Singularity Image Format (SIF).
+Claude Code, Pi, and OMP). It saves this as a Docker Archive tarball, which is
+then passed to Singularity to convert it into the Singularity Image Format (SIF).
 
 When this happens on code in the ``main`` branch, both images are pushed to the
 `GitHub Container Registry (GHCR)
@@ -116,10 +116,10 @@ When this happens on code in the ``main`` branch, both images are pushed to the
 GitHub Actions publishes the Podman image to GHCR with these tags:
 
 - ``sha-<git sha>`` for every build
-- ``claude-<version>``, ``codex-<version>``, ``pi-<version>`` pinning each
-  harness to a specific version
-- ``claude-latest``, ``codex-latest``, ``pi-latest`` pointing at the newest
-  build for each harness
+- ``claude-<version>``, ``codex-<version>``, ``pi-<version>``, and
+  ``omp-<version>`` pinning each harness to a specific version
+- ``claude-latest``, ``codex-latest``, ``pi-latest``, and ``omp-latest``
+  pointing at the newest build for each harness
 - ``latest`` (the newest overall build) on ``main``
 
 The Singularity (SIF) image is published to the ``-sif`` GHCR package with the
@@ -155,10 +155,11 @@ overall image instead.
 
 The GitHub Actions container workflow builds ``linux/amd64`` images only. Podman automatically handles this different architecture on macOS. There is a performance hit, but the limiting factor of these harnesses is model calling, not CPU usage.
 
-The GitHub Actions workfow first builds and tests the Podman image, then
+The GitHub Actions workflow first builds and tests the Podman image, then
 derives the version tags by running the built container and reading ``claude
---version``, ``codex --version``, and ``pi --version``. The Singularity phase
-then converts that same tested Podman image into a SIF artifact.
+--version``, ``codex --version``, ``pi --version``, and ``omp --version``. The
+Singularity phase then converts that same tested Podman image into a SIF
+artifact.
 
 The workflow also sets ``org.opencontainers.image.source`` to the GitHub
 repository URL so the GHCR package stays linked to the repository and inherits

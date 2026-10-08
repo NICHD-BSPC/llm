@@ -74,10 +74,12 @@ jobs:
           claude_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" claude --version | sed -E 's/^([0-9][^ ]*).*/\1/')"
           codex_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" codex --version | awk '{print $2}')"
           pi_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" pi --version 2>&1 | tr -d '\r')"
+          omp_version="$(podman run --rm "${PODMAN_IMAGE_NAME}" omp --version 2>&1 | awk 'NR == 1 { print $NF }' | tr -d '\r')"
           {
             echo "CLAUDE_VERSION=${claude_version}"
             echo "CODEX_VERSION=${codex_version}"
             echo "PI_VERSION=${pi_version}"
+            echo "OMP_VERSION=${omp_version}"
           } >> "${GITHUB_ENV}"
 
       - name: Run Podman shell diagnostics
@@ -232,6 +234,7 @@ jobs:
           publish_harness_tags claude "${CLAUDE_VERSION}"
           publish_harness_tags codex "${CODEX_VERSION}"
           publish_harness_tags pi "${PI_VERSION}"
+          publish_harness_tags omp "${OMP_VERSION}"
 
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
             skopeo copy --all \
@@ -278,6 +281,7 @@ jobs:
           CLAUDE_VERSION="$(podman run --rm "${amd64_ref}" claude --version | sed -E 's/^([0-9][^ ]*).*/\1/')"
           CODEX_VERSION="$(podman run --rm "${amd64_ref}" codex --version | awk '{print $2}')"
           PI_VERSION="$(podman run --rm "${amd64_ref}" pi --version 2>&1 | tr -d '\r')"
+          OMP_VERSION="$(podman run --rm "${amd64_ref}" omp --version 2>&1 | awk 'NR == 1 { print $NF }' | tr -d '\r')"
 
           # Publish each harness's "<harness>-<version>" tag and move its
           # per-harness "<harness>-latest" tag. The version tag is only pushed
@@ -309,6 +313,7 @@ jobs:
           publish_harness_tags claude "${CLAUDE_VERSION}"
           publish_harness_tags codex "${CODEX_VERSION}"
           publish_harness_tags pi "${PI_VERSION}"
+          publish_harness_tags omp "${OMP_VERSION}"
 
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
             skopeo copy --all \

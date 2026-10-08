@@ -1,6 +1,11 @@
 Changelog
 =========
 
+2026-10-05
+----------
+
+Add support for the OMP (oh-my-pi) harness.
+
 2026-09-28
 ----------
 
