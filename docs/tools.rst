@@ -574,38 +574,45 @@ Example usage:
    # Stop later with `podman stop agentsview`
    agentsview.py --port 9000 --detach
 
-   # rsync over the relevant dirs from the remote to a temp dir, and serve
-   # *those* sessions instead.
-   agentsview.py --remote myhost --user myuser
+   agentsview.py --remote biowulf.nih.gov                    # local + biowulf.nih.gov
+   agentsview.py --remote biowulf.nih.gov --remote vm        # local + two remotes
+   agentsview.py --remote-only biowulf.nih.gov               # just biowulf.nih.gov
 
-   # Just print the podman command
-   agentsview.py --dry-run
+   # Log each ssh/rsync/podman command as it runs
+   agentsview.py --verbose
 
-The default volume and container name are ``agentsview-data`` and
-``agentsview`` locally, or ``agentsview-data-HOST`` and ``agentsview-HOST``
-for a remote host. Override the image or volume with ``--image`` and
-``--volume``. These stick around between runs.
+Within the agentsview app, the Machine filter lets you choose between
+local/remotes, and the list of sessions along the left side shows the hostname
+for remote sessions.
 
-For a remote host, the script first checks for available session paths over
-SSH, pulls a snapshot with rsync into a private temporary directory, and
-removes it when the foreground server exits. Run again to refresh. This temp
-dir is removed when you stop the server with Ctrl-C or when it exits on an
-error. But if the script is killed instead (e.g., ``kill PID`` or ``timeout``),
-the temporary directory (``agentsview-*`` under your system's temp dir) is left
-behind and the container keeps running. You can clean up with ``podman stop
-agentsview-HOST`` and remove the directory by hand.
+Further details:
 
-``--remote`` takes a plain hostname; pass the username with ``--user``.
-Symlinked session directories on the remote are followed, and there are checks
-to make sure pulled files/dirs exist as expected before starting the container.
+The script rewrites ``/data/config.toml`` on every run. This is needed to
+configure the local and remote sessions, but it means that settings changed in
+the agentsview UI are not saved between runs.
+
+For remote hosts, the script checks for available session paths over SSH,
+pulls a snapshot for each host with rsync into a private temporary directory,
+and removes it when the foreground server exits. Run again to refresh.
+``--remote`` is repeatable; ``--remote-only`` serves one remote without local
+sessions. Both take plain hostnames; ``--user`` applies to every remote.
+``--detach`` is local-only.
+
+The temp dir is removed when you stop the server with Ctrl-C or when it exits
+on an error. But if the script is killed instead (e.g., ``kill PID`` or
+``timeout``), the temporary directory (``agentsview-*`` under your system's
+temp dir) is left behind and the container keeps running. Stop it with
+``podman stop agentsview`` (or ``agentsview-HOST`` for remote-only) and remove
+the directory by hand. Symlinked session directories on the remote are
+followed, and pulled paths are checked before starting the container.
 
 .. warning::
 
    Removing the temporary directory does **not** remove the remote sessions
    from your machine. agentsview archives every session it indexes into its
-   data volume (``agentsview-data-HOST``), and keeps them after the source
-   files are gone. To delete that copy, stop the container and run ``podman
-   volume rm agentsview-data-HOST``.
+   data volume (``agentsview-data`` for combined, ``agentsview-data-HOST``
+   for remote-only), and keeps them after the source files are gone. To delete
+   that copy, stop the container and remove the relevant Podman volume.
 
 
 .. _build:
