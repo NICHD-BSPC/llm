@@ -5,8 +5,9 @@ AI was used in multiple ways in this project. Every line was manually inspected.
 The committing author is entirely responsible and accountable for the entirety
 of their commits.
 
-Claude Code (with Sonnet 4.6, Opus 4.6, Opus 4.7) and Codex (with GPT 5.4) were
-used in the following ways:
+Claude Code, Codex, Pi, and OMP harnesses using Sonnet 4.6, Opus 4.6, Opus 4.7,
+Opus 5.5, GPT
+5.4, GPT 6 Sol, and GPT 6 Luna were used in the following ways:
 
 - Sketching out initial ideas for launch.py
 - Converting an earlier functional based approach of launch.py to an object-oriented
@@ -25,3 +26,5 @@ used in the following ways:
   then manually reviewed/fixed/edited).
 - The `run-diagnostics` and `container-diagnostics` scripts (and the idea of
   running with `script` to get around TTY requirements) used in testing
+- Drafting ``agentsview.py`` and documentation which were then manually
+  reviewed and edited. *All* agentsview tests were completely written by AI.

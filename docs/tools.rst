@@ -3,11 +3,12 @@
 Tools Reference
 ===============
 
-This repository revolves around three utility scripts:
+This repository provides four utility scripts:
 
 1. :file:`refresh.py` refreshes local credentials and can copy them to a remote host
-2. :file:`launch.py` starts Codex or Claude Code inside a container
-3. :file:`build.py` builds the container image itself
+2. :file:`launch.py` starts agents inside a container
+3. :file:`agentsview.py` a browser view of agent sessions
+4. :file:`build.py` builds the container image itself
 
 You'll usually only need :file:`refresh.py` and :file:`launch.py`.
 
@@ -19,8 +20,9 @@ the hosted one.
 How to get the scripts
 ----------------------
 
-You will need :file:`refresh.py` on the local machine, and :file:`launch.py` on
-whatever machine (local and/or remote) you want to run a container on.
+You will need :file:`refresh.py` and :file:`agentsview.py` on the local
+machine, and :file:`launch.py` on whatever machine (local and/or remote) you
+want to run an agent container on.
 
 Two main ways of getting them.
 
@@ -39,14 +41,15 @@ Two main ways of getting them.
       # on local machine
       curl -fSsL -o ~/bin/launch.py https://raw.githubusercontent.com/nichd-bspc/llm/main/launch.py
       curl -fSsL -o ~/bin/refresh.py https://raw.githubusercontent.com/nichd-bspc/llm/main/refresh.py
-      chmod +x ~/bin/launch.py ~/bin/refresh.py
+      curl -fSsL -o ~/bin/agentsview.py https://raw.githubusercontent.com/nichd-bspc/llm/main/agentsview.py
+      chmod +x ~/bin/launch.py ~/bin/refresh.py ~/bin/agentsview.py
 
       # on remote we only need launch.py
       curl -fSsL -o ~/bin/launch.py https://raw.githubusercontent.com/nichd-bspc/llm/main/launch.py
       chmod +x ~/bin/launch.py
 
 Then either call them directly with the full path name, or add them to your
-``PATH``. For example, if you cloned the repo to your ome directory, you would
+``PATH``. For example, if you cloned the repo to your home directory, you would
 add this to your :file:`~/.bashrc` (or wherever you set your ``$PATH``
 variable):
 
@@ -541,6 +544,69 @@ pointing to that path:
 - ``REQUESTS_CA_BUNDLE``
 - ``NODE_EXTRA_CA_CERTS``
 - ``CURL_CA_BUNDLE``
+
+.. _agentsview:
+
+``agentsview.py``
+-----------------
+
+Browse Claude, Pi, OMP, and Codex sessions using
+[agentsview](https://github.com/kenn-io/agentsview) running in a Podman image.
+
+By default, this serves on localhost port 8080, so visit 127.0.0.1:8080 in
+a browser to explore the interface. If any of the supported harnesses have
+existing directories, they will be mounted read-only into the container for
+exploration.
+
+The [agentsview docs](https://www.agentsview.io/) describe all sorts of ways to
+explore sessions. This includes things like cost, flagging issues, search all
+transcripts to find that thing you were working on 6 weeks ago, and look for
+trends. All data stays local, and telemetry is disabled.
+
+Example usage:
+
+.. code-block:: bash
+
+   # Serve on http://127.0.0.1:8080
+   agentsview.py
+
+   # Serve on http://127.0.0.1:9000 instead, and run in the background.
+   # Stop later with `podman stop agentsview`
+   agentsview.py --port 9000 --detach
+
+   # rsync over the relevant dirs from the remote to a temp dir, and serve
+   # *those* sessions instead.
+   agentsview.py --remote myhost --user myuser
+
+   # Just print the podman command
+   agentsview.py --dry-run
+
+The default volume and container name are ``agentsview-data`` and
+``agentsview`` locally, or ``agentsview-data-HOST`` and ``agentsview-HOST``
+for a remote host. Override the image or volume with ``--image`` and
+``--volume``. These stick around between runs.
+
+For a remote host, the script first checks for available session paths over
+SSH, pulls a snapshot with rsync into a private temporary directory, and
+removes it when the foreground server exits. Run again to refresh. This temp
+dir is removed when you stop the server with Ctrl-C or when it exits on an
+error. But if the script is killed instead (e.g., ``kill PID`` or ``timeout``),
+the temporary directory (``agentsview-*`` under your system's temp dir) is left
+behind and the container keeps running. You can clean up with ``podman stop
+agentsview-HOST`` and remove the directory by hand.
+
+``--remote`` takes a plain hostname; pass the username with ``--user``.
+Symlinked session directories on the remote are followed, and there are checks
+to make sure pulled files/dirs exist as expected before starting the container.
+
+.. warning::
+
+   Removing the temporary directory does **not** remove the remote sessions
+   from your machine. agentsview archives every session it indexes into its
+   data volume (``agentsview-data-HOST``), and keeps them after the source
+   files are gone. To delete that copy, stop the container and run ``podman
+   volume rm agentsview-data-HOST``.
+
 
 .. _build:
 
