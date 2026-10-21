@@ -1,6 +1,14 @@
 Changelog
 =========
 
+2026-10-20
+----------
+
+Add ``agentsview.py``, to run
+[agentsview](https://github.com/kenn-io/agentsview) on local or (rsync-pulled)
+remote agent sessions. This lets you explore current and historical sessions
+from all harnesses supported in this repo.
+
 2026-10-05
 ----------
 
