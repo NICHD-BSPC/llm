@@ -1,6 +1,12 @@
 Changelog
 =========
 
+2026-10-25
+----------
+
+Add ``refresh_macos_shortcut.sh`` to use in a macOS Shortcut, allowing
+credential refresh with a keyboard shortcut.
+
 2026-10-20
 ----------
 
