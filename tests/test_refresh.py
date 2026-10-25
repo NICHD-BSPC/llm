@@ -117,6 +117,24 @@ class RefreshAwsTests(unittest.TestCase):
         )
         self.assertEqual(run.call_args_list[2].args[0][-2:], ["--profile", "source profile"])
 
+    def test_login_event_is_opt_in_and_precedes_aws_login(self):
+        failure = subprocess.CalledProcessError(1, ["aws"])
+        success = mock.Mock(stdout=json.dumps(valid_credentials()))
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                exports = iter((failure, success))
+
+                def run_command(cmd, **kwargs):
+                    if cmd[:3] == ["aws", "sso", "login"]:
+                        events = [line for line in stderr.getvalue().splitlines()
+                                  if line.startswith("LLM_REFRESH_EVENT:")]
+                        self.assertEqual(events, ["LLM_REFRESH_EVENT:aws_sso_login"] if enabled else [])
+                        return None
+                    return next(exports)
+
+                with mock.patch.object(refresh.subprocess, "run", side_effect=run_command):
+                    refresh.ensure_aws_credentials(notification_events=enabled)
+
     def test_invalid_initial_credentials_login_then_invalid_retry_propagates(self):
         invalid = mock.Mock(stdout=json.dumps(valid_credentials(Expiration="expired")))
         with mock.patch.object(refresh.subprocess, "run", side_effect=[invalid, None, invalid]) as run:
@@ -210,7 +228,7 @@ class RefreshAwsTests(unittest.TestCase):
     def test_no_export_creds_checks_but_does_not_write_or_transfer_bundle(self):
         args = mock.Mock(show_files=False, bedrock_export=False, aws_profile=None,
                          kind="all", no_export_creds=True, full=True,
-                         remote="remote.example", user="tester")
+                         remote="remote.example", user="tester", notification_events=False)
         credentials = valid_credentials()
         with (
             mock.patch.object(refresh, "parse_args", return_value=args),
@@ -222,14 +240,14 @@ class RefreshAwsTests(unittest.TestCase):
             mock.patch.object(refresh, "rsync_paths") as rsync,
         ):
             self.assertEqual(refresh.main(), 0)
-        ensure.assert_called_once_with(None)
+        ensure.assert_called_once_with(None, False)
         write.assert_not_called()
         self.assertNotIn("~/.aws/llm-export", rsync.call_args.kwargs["paths"])
 
     def test_normal_refresh_passes_acquired_credentials_to_writer(self):
         args = mock.Mock(show_files=False, bedrock_export=False, aws_profile="source",
                          kind="claude", no_export_creds=False, full=False,
-                         remote=None, user="tester")
+                         remote=None, user="tester", notification_events=False)
         credentials = valid_credentials()
         with (
             mock.patch.object(refresh, "parse_args", return_value=args),
@@ -237,11 +255,15 @@ class RefreshAwsTests(unittest.TestCase):
             mock.patch.object(refresh, "write_managed_aws_bundle") as write,
         ):
             self.assertEqual(refresh.main(), 0)
-        ensure.assert_called_once_with("source")
+        ensure.assert_called_once_with("source", False)
         write.assert_called_once_with(credentials)
 
 
 class RefreshProfileSelectionTests(unittest.TestCase):
+    def test_notification_events_are_opt_in(self):
+        self.assertFalse(refresh.parse_args([]).notification_events)
+        self.assertTrue(refresh.parse_args(["--notification-events"]).notification_events)
+
     def test_cli_parses_aws_profile_option(self):
         self.assertEqual(refresh.parse_args(["--aws-profile", "source profile"]).aws_profile, "source profile")
         self.assertIsNone(refresh.parse_args([]).aws_profile)
@@ -262,7 +284,7 @@ class RefreshProfileSelectionTests(unittest.TestCase):
     def test_bedrock_export_reuses_acquired_expiration(self):
         args = mock.Mock(show_files=False, bedrock_export=True, aws_profile="source",
                          kind="pi", no_export_creds=False, full=True,
-                         remote="remote.example", user="tester")
+                         remote="remote.example", user="tester", notification_events=False)
         credentials = valid_credentials()
         with (
             mock.patch.object(refresh, "parse_args", return_value=args),
@@ -272,7 +294,7 @@ class RefreshProfileSelectionTests(unittest.TestCase):
             mock.patch("sys.stdout", io.StringIO()),
         ):
             self.assertEqual(refresh.main(), 0)
-        ensure.assert_called_once_with("source")
+        ensure.assert_called_once_with("source", False)
         command.assert_called_once_with("source", credentials["Expiration"])
         rsync.assert_not_called()
 
@@ -319,6 +341,23 @@ class RefreshCodexTokenTests(unittest.TestCase):
                 refresh.refresh_codex(path)
 
             run.assert_called_once_with(["codex", "login"], check=True)
+
+    def test_login_event_for_missing_and_rejected_codex_token(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "auth.json"
+            for rejected in (False, True):
+                with self.subTest(rejected=rejected):
+                    if rejected:
+                        path.write_text(json.dumps(codex_auth(expires_in=-timedelta(days=2))))
+                    else:
+                        path.write_text("not json")
+                    error = urllib.error.HTTPError(refresh.CODEX_TOKEN_URL, 401, "Unauthorized", {}, io.BytesIO(b"rejected"))
+                    with (
+                        mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                        mock.patch.object(refresh, "refresh_codex_tokens", side_effect=error),
+                        mock.patch.object(refresh.subprocess, "run", side_effect=lambda *a, **k: self.assertEqual(stderr.getvalue(), "LLM_REFRESH_EVENT:codex_login\n")),
+                    ):
+                        refresh.refresh_codex(path, notification_events=True)
 
     def test_refresh_skipped_while_access_token_is_fresh(self):
         with tempfile.TemporaryDirectory() as tmpdir:

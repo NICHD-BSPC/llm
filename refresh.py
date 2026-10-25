@@ -46,6 +46,15 @@ CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 # Refresh when the access token has less than this much life left.
 CODEX_REFRESH_WINDOW = timedelta(days=1)
 
+# ssh options for the rsync push. Speeds up the reporting of issues if the
+# remote is not available.
+RSYNC_SSH_OPTIONS = (
+    "-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2"
+)
+# rsync --timeout: give up if no data moves for this many seconds.
+RSYNC_IO_TIMEOUT = 60
+
+
 CREDENTIAL_PATHS = {
     "codex": {
         "auth": ("~/.codex/auth.json",),
@@ -81,25 +90,22 @@ CREDENTIAL_PATHS = {
 
 
 def write_private_text(path, content):
-    """Write a private file, creating its parent directory if needed."""
+    """Write a private file, creating its parent directory if needed. Do an
+    atomic write (write to temp file and then rename) to be careful.
+    """
     parent_existed = path.parent.exists()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if not parent_existed:
         os.chmod(path.parent, 0o700)
-
-    # open(path, "w") leaves an existing file's mode unchanged; since these are
-    # credentials we're keeping the permissions 600 all the time.
-    with os.fdopen(
-        os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
-        "w",
-        encoding="utf-8",
-    ) as output:
-        os.fchmod(output.fileno(), 0o600)
-        output.write(content)
+    atomic_write_private_text(path, content)
 
 
 def rsync_paths(paths, user, remote):
-    """Copy multiple local paths to the remote home directory in one rsync call."""
+    """Copy multiple local paths to the remote home directory in one rsync call.
+
+    Raises ``subprocess.CalledProcessError`` if rsync fails, including when the
+    remote is unreachable
+    """
 
     if not paths:
         return
@@ -135,11 +141,20 @@ def rsync_paths(paths, user, remote):
         "rsyncing these paths to %s:~/...\n\n  %s", remote_host, "\n  ".join(paths)
     )
 
+    # BatchMode makes ssh fail instead of prompting for a passphrase, but only
+    # when there's no terminal.
+    ssh_cmd = f"ssh {RSYNC_SSH_OPTIONS}"
+    if not sys.stdin.isatty():
+        ssh_cmd += " -o BatchMode=yes"
+
     subprocess.run(
         [
             "rsync",
             "-arv",
             "--relative",
+            f"--timeout={RSYNC_IO_TIMEOUT}",
+            "-e",
+            ssh_cmd,
             *relative_paths,
             f"{remote_host}:~/",
         ],
@@ -157,7 +172,12 @@ def aws_export_credentials(profile=None):
     return validate_aws_process_credentials(json.loads(result.stdout))
 
 
-def ensure_aws_credentials(profile=None):
+def emit_login_event(name, enabled):
+    if enabled:
+        print(f"LLM_REFRESH_EVENT:{name}", file=sys.stderr, flush=True)
+
+
+def ensure_aws_credentials(profile=None, notification_events=False):
     """Return usable credentials, logging in through SSO and retrying if needed."""
     try:
         credentials = aws_export_credentials(profile)
@@ -174,6 +194,7 @@ def ensure_aws_credentials(profile=None):
         cmd = ["aws", "sso", "login"]
         if profile:
             cmd.extend(["--profile", profile])
+        emit_login_event("aws_sso_login", notification_events)
         try:
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as login_error:
@@ -191,7 +212,7 @@ def ensure_aws_credentials(profile=None):
     return credentials
 
 
-def refresh_codex(path):
+def refresh_codex(path, notification_events=False):
     """Ensure the Codex auth file holds a currently valid access token.
 
     ``codex login status`` reports success when an auth.json exists but doesn't
@@ -206,6 +227,7 @@ def refresh_codex(path):
     # No refresh token, so defer to codex login
     if not auth.get("tokens", {}).get("refresh_token"):
         LOGGER.warning("Codex: no refresh token in %s, running codex login...", path)
+        emit_login_event("codex_login", notification_events)
         subprocess.run(["codex", "login"], check=True)
         return
 
@@ -230,6 +252,7 @@ def refresh_codex(path):
             error.code,
             body,
         )
+        emit_login_event("codex_login", notification_events)
         subprocess.run(["codex", "login"], check=True)
         return
 
@@ -545,6 +568,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         ),
     )
     ap.add_argument(
+        "--notification-events",
+        action="store_true",
+        help="Emit event lines on stderr for notification scripts to string-match on",
+    )
+    ap.add_argument(
         "--no-export-creds",
         action="store_true",
         help="Skip exporting AWS credentials into ~/.aws/llm-export",
@@ -604,7 +632,7 @@ def main() -> int:
             AWS_EXPORT_PROFILE,
         )
         try:
-            credentials = ensure_aws_credentials(source_profile)
+            credentials = ensure_aws_credentials(source_profile, args.notification_events)
             print(
                 bedrock_export_command(
                     source_profile, credentials.get("Expiration")
@@ -624,7 +652,7 @@ def main() -> int:
             source_profile or "(AWS CLI default)",
             AWS_EXPORT_PROFILE,
         )
-        credentials = ensure_aws_credentials(source_profile)
+        credentials = ensure_aws_credentials(source_profile, args.notification_events)
         if not args.no_export_creds:
             write_managed_aws_bundle(credentials)
 
@@ -635,7 +663,7 @@ def main() -> int:
         pi_auth_path = Path(
             os.environ.get("PI_AUTH_PATH", Path.home() / ".pi" / "agent" / "auth.json")
         )
-        refresh_codex(codex_path)
+        refresh_codex(codex_path, args.notification_events)
         convert_codex_auth_to_pi(codex_path, pi_auth_path)
         LOGGER.info("Updated Pi Codex auth at %s", pi_auth_path)
 
@@ -646,7 +674,18 @@ def main() -> int:
     )
 
     if args.remote:
-        rsync_paths(paths=paths, user=args.user, remote=args.remote)
+        try:
+            rsync_paths(paths=paths, user=args.user, remote=args.remote)
+        except subprocess.CalledProcessError as exc:
+            # rsync/ssh already printed the specific error above this.
+            LOGGER.error(
+                "push to %s failed (rsync exit %s; not on VPN?). Credentials "
+                "were refreshed locally; rerun when %s is reachable.",
+                args.remote,
+                exc.returncode,
+                args.remote,
+            )
+            return 75  # BSD's EX_TEMPFAIL (error is expected to be a temporary failure)
     else:
         LOGGER.info("No --remote specified; skipping push.")
 

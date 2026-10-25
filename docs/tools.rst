@@ -181,6 +181,88 @@ profile name are logged; credential values never are.
 There is no separate profile configuration file for this tool -- use the AWS
 CLI's own profiles.
 
+.. _refresh-macos-shortcut:
+
+Running from a macOS Shortcut
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:file:`refresh_macos_shortcut.sh` wraps ``refresh.py --remote`` so it can run
+from the macOS Shortcuts app (e.g., from the menu bar, a keyboard shortcut, or
+Siri) instead of a terminal. It shows desktop notifications as it goes and
+writes a log you can check if something goes wrong.
+
+What it does:
+
+- Loads your SSH key into the agent using the passphrase saved in the login
+  keychain (``ssh-add --apple-load-keychain``), so the rsync to the remote does
+  not need a terminal prompt.
+- Runs ``refresh.py --remote HOST --user USER --notification-events``.
+- Shows notifications, like when :cmd:`refresh.py` is about to open a browser
+  for AWS SSO or Codex login, and success/failure.
+- If the only error was that the remote couldn't be contacted (e.g., you're not
+  on VPN), then the log is not shown. Any other errors, the log is shown.
+
+The script reads these environment variables:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Variable
+     - Required
+     - Meaning
+   * - ``LLM_REMOTE_HOST``
+     - yes
+     - Remote host to push credentials to (passed to ``--remote``)
+   * - ``LLM_REFRESH_SCRIPT``
+     - yes
+     - Full path to :file:`refresh.py`
+   * - ``LLM_REMOTE_USER``
+     - no
+     - Username on the remote (passed to ``--user``); defaults to ``$USER``
+
+Shortcuts runs scripts with a minimal environment, so your shell startup
+files are **not** read. Set the variables in the shortcut itself, or in a file
+that the shortcut sources.
+
+To set it up:
+
+1. Open Shortcuts.app and create a new shortcut.
+2. Add a **Run Shell Script** action, with shell set to ``bash``.
+3. Set the script to something like:
+
+   .. code-block:: bash
+
+      export LLM_REMOTE_HOST=biowulf.nih.gov
+      export LLM_REMOTE_USER=myusername   # only if different from local $USER
+      export LLM_REFRESH_SCRIPT="<path to refresh.py>"
+      export PATH="<where aws cli is installed>:$PATH"
+      "<path to refresh_macos_shortcut.sh>"
+
+   or, if you have those env vars stored somewhere else like :file:`~/.extra`,
+
+   .. code-block:: bash
+
+      source ~/.extra
+      source ~/.path
+      "<path to refresh_macos_shortcut.sh>"
+
+4. Run it once by hand. macOS may ask to allow notifications and to let
+   Shortcuts control other apps; allow both.
+
+5. Add a shortcut key (this is under the circled "i" menu for the shortcut,
+   under "Details" tab).
+
+The log for the most recent run is at
+:file:`~/Library/Logs/llm-refresh.log` and is overwritten on each run. It has
+everything :cmd:`refresh.py` printed plus the exit code.
+
+.. note::
+
+   The script's stdin is ``/dev/null``, so anything in :cmd:`refresh.py` that
+   waits for keyboard input fails right away (and shows up in the log) instead
+   of hanging. If you need to answer a prompt, run :cmd:`refresh.py` from a
+   terminal instead.
+
 .. _launch:
 
 ``launch.py``
