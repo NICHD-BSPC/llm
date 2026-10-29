@@ -5,7 +5,7 @@ In `NICHD's Bioinformatics and Scientific Programming Core
 <https://www.nichd.nih.gov/about/org/dir/other-facilities/cores/bioinformatics>`__,
 we wanted to use multiple LLM agent tools in a secure way on multiple systems.
 
-Specifically, we wanted to run agens in isolated containers to prevent them
+Specifically, we wanted to run agents in isolated containers to prevent them
 from seeing arbitrary directories on the system. See :ref:`why-containers` for
 more on this topic.
 
