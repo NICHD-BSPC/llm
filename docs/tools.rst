@@ -633,14 +633,14 @@ pointing to that path:
 -----------------
 
 Browse Claude, Pi, OMP, and Codex sessions using
-[agentsview](https://github.com/kenn-io/agentsview) running in a Podman image.
+`agentsview <https://github.com/kenn-io/agentsview>`__ running in a Podman image.
 
 By default, this serves on localhost port 8080, so visit 127.0.0.1:8080 in
 a browser to explore the interface. If any of the supported harnesses have
 existing directories, they will be mounted read-only into the container for
 exploration.
 
-The [agentsview docs](https://www.agentsview.io/) describe all sorts of ways to
+The `agentsview docs <https://www.agentsview.io/>`__ describe all sorts of ways to
 explore sessions. This includes things like cost, flagging issues, search all
 transcripts to find that thing you were working on 6 weeks ago, and look for
 trends. All data stays local, and telemetry is disabled.

@@ -16,6 +16,10 @@ models in a similar fashion on STRIDES; that is not yet documented here.
 enrollment <https://cloud.nih.gov/enrollment/>`__.
 
 
+Once you set up AWS SSO, you can use the same mechanism to run Claude Code, Pi,
+or OMP. So while it's a bit more involved than Codex, it does afford a lot more
+flexibility.
+
 Step 1. Initial AWS SSO setup
 -----------------------------
 
@@ -42,20 +46,7 @@ Export these environment variables, for example in :file:`~/.bashrc`:
       export CLAUDE_CODE_DISABLE_AUTOUPDATER=1          # Don't autoupdate
       export CLAUDE_CODE_DISABLE_INSTALLATION_CHECKS=1  # Don't check installation
 
-      # Env vars to configure which Amazon Bedrock models to use.
-      #
-      # Otherwise we get the message: "Sonnet: Sonnet 4.5 not available — using
-      # Sonnet 4 for this session; Haiku: Haiku 4.5 not available — using Claude
-      # 3.5 Haiku for this session."
-      #
-      # In v2.1.119, it seems OK to not set the Opus default model; selecting
-      # it with the /model command sets it to the value we use below.
-
-      export ANTHROPIC_DEFAULT_OPUS_MODEL="us.anthropic.claude-opus-4-6-v1"
-      export ANTHROPIC_DEFAULT_SONNET_MODEL="us.anthropic.claude-sonnet-4-6"
-      export ANTHROPIC_DEFAULT_HAIKU_MODEL="us.anthropic.claude-haiku-4-5-20251001-v1:0"
-
-      # These should have been exported already during the previous step
+      # This should have been exported already during the previous step
       export AWS_REGION=us-east-1
 
 .. tip::

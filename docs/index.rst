@@ -19,7 +19,6 @@ When everything is set up, usage looks like this:
    launch.py pi      # or pi
    launch.py omp     # or OMP
 
-
 Or, to use on a remote machine:
 
 .. code-block:: bash
@@ -62,6 +61,7 @@ what it wants:
 
 - :ref:`refresh` to refresh your credentials and optionally push them to a remote system
 - :ref:`launch` to launch a container running the LLM tool
+- :ref:`agentsview` to launch a container that lets you explore your sessions across models, harnesses, and machines.
 - ``build.py`` to build container images (only required if you want to build your own; you can use our hosted images)
 
 **See** https://nichd-bspc.github.io/llm **for documentation.**
