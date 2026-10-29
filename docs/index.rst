@@ -40,7 +40,7 @@ what it wants:
 .. code-block:: bash
 
    launch.py \
-     --ro my/read-only/dir \          # agent can read (but not write) to my/read-only
+     --ro my/read-only/dir \          # agent can read (but not write) to my/read-only/dir
      --mask secret/dir \ .            # agent only sees an empty directory for secret/dir
      --conda-env path/to/conda/env \  # agent can use the executables in path/to/conda/env
      --certs ~/certs.pem \            # run over VPN
