@@ -1,7 +1,7 @@
 name: Build and test containers
 
 env:
-  APPTAINER_VERSION: "1.3.6"
+  APPTAINER_VERSION: "1.5.5"
   REGISTRY: ghcr.io
   PODMAN_IMAGE_NAME: localhost/llm-devcontainer:latest
   SINGULARITY_SIF_PATH: llm.sif
