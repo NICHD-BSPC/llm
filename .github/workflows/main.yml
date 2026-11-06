@@ -1,7 +1,6 @@
 name: Build and test containers
 
 env:
-  APPTAINER_VERSION: "1.5.5"
   REGISTRY: ghcr.io
   PODMAN_IMAGE_NAME: localhost/llm-devcontainer:latest
   SINGULARITY_SIF_PATH: llm.sif
@@ -55,10 +54,8 @@ jobs:
       - name: Install Apptainer
         if: matrix.arch == 'amd64'
         run: |
-          curl -fsSL \
-            -o /tmp/apptainer.deb \
-            "https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/apptainer_${APPTAINER_VERSION}_amd64.deb"
-          sudo apt-get install -y /tmp/apptainer.deb
+          sudo add-apt-repository -y ppa:apptainer/ppa
+          sudo apt update && sudo apt install -y apptainer
           sudo ln -sf "$(command -v apptainer)" /usr/local/bin/singularity
 
       - name: Build Podman image
