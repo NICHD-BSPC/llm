@@ -50,12 +50,46 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl podman skopeo
 
-      # Apptainer/Singularity is only built and published for amd64
       - name: Install Apptainer
         if: matrix.arch == 'amd64'
         run: |
+          # Extra packages are FUSE helpers that Apptainer uses in unprivileged
+          # mode. squashfuse mounts SIF images, fuse2fs handles ext3 overlay
+          # images, fuse-overlayfs provides writable overlays, and gocryptfs
+          # supports encrypted containers.
           sudo add-apt-repository -y ppa:apptainer/ppa
-          sudo apt update && sudo apt install -y apptainer
+          sudo apt update && sudo apt install -y apptainer squashfuse fuse2fs fuse-overlayfs gocryptfs
+
+          # Ubuntu 24.04 restricts unprivileged user namespaces through
+          # AppArmor. But Apptainer needs user namespaces to build and run
+          # containers without root.
+          #
+          # This turns off the user-namespace restriction for the whole
+          # machine, which is OK because we're running on a throwaway CI VM
+          # that has passwordless sudo anyway.
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+          # Ubuntu's existing fusermount3 AppArmor profile pulls in
+          # <local/fusermount3> if that file exists. Create it so the include
+          # resolves, then allow fusermount3 to unmount Apptainer's FUSE mounts
+          # under /var/apptainer. Without that, unmounting a SIF image at
+          # container exit can be denied.
+          # NOTE: the rule goes to /etc/apptainer/apparmor-local-fusermount3,
+          # not the /etc/apparmor.d/local/fusermount3 file touched above. It
+          # only takes effect if something includes that file, so check it if
+          # fusermount3 denials show up. `|| true` keeps this step best-effort.
+          sudo mkdir -p /etc/apparmor.d/local
+          sudo touch /etc/apparmor.d/local/fusermount3
+          echo 'umount /var/apptainer/**' | sudo tee -a /etc/apptainer/apparmor-local-fusermount3 > /dev/null || true
+
+          # Reload AppArmor so the fusermount3 change is picked up (this is
+          # separate from the userns restriction handled by sysctl above)
+          sudo systemctl reload apparmor
+
+          # launch.py and tests/run-diagnostics.sh call `singularity`, so make
+          # sure that name resolves to apptainer.
           sudo ln -sf "$(command -v apptainer)" /usr/local/bin/singularity
 
       - name: Build Podman image
@@ -186,6 +220,46 @@ jobs:
           fi
           if grep -q 'SYNTHETIC_' "$log_file"; then
             echo "Diagnostics exposed a synthetic credential value." >&2
+            exit 1
+          fi
+
+          # Check that Apptainer cleaned up after itself. Each run above mounts
+          # the SIF with squashfuse (and possibly fuse-overlayfs) and should
+          # unmount it when the container exits. A failed unmount usually
+          # just prints a warning and keeps the container's exit code, so
+          # without these checks CI would pass even if cleanup were broken
+          # (e.g. if the fusermount3 AppArmor tweak in "Install Apptainer"
+          # stopped working). Removing that tweak and watching these checks
+          # is the way to find out whether it's still needed.
+
+          # 1. Apptainer's own cleanup warnings. If the diagnostics output
+          #    ever legitimately contains these words, narrow the pattern.
+          if grep -Eiq 'unmount|fusermount' "$log_file"; then
+            echo "Apptainer reported an unmount problem:" >&2
+            grep -Ei 'unmount|fusermount' "$log_file" >&2
+            exit 1
+          fi
+
+          # 2. Leftover FUSE mounts visible from the host. Field 3 of
+          #    /proc/mounts is the filesystem type, e.g. "fuse.squashfuse_ll".
+          #    Matching on the type avoids false positives from the runner's
+          #    snap mounts, which use the kernel's "squashfs" type.
+          #    Unprivileged Apptainer mounts inside its own mount namespace,
+          #    so a leak may not show up here. That's why check 3 exists.
+          leftover_mounts="$(awk '$3 ~ /^fuse\.(squashfuse|fuse-overlayfs)/' /proc/mounts)"
+          if [ -n "$leftover_mounts" ]; then
+            echo "Leftover Apptainer FUSE mounts:" >&2
+            echo "$leftover_mounts" >&2
+            exit 1
+          fi
+
+          # 3. Leftover FUSE daemons. If unmounting fails, the squashfuse or
+          #    fuse-overlayfs process serving the mount can outlive the
+          #    container even when the mount itself isn't visible from here.
+          #    -x matches the exact process name, not its command line.
+          if pgrep -x 'squashfuse|squashfuse_ll|fuse-overlayfs' >/dev/null; then
+            echo "Leftover Apptainer FUSE processes:" >&2
+            pgrep -a -x 'squashfuse|squashfuse_ll|fuse-overlayfs' >&2
             exit 1
           fi
 
