@@ -80,13 +80,13 @@ jobs:
           # not the /etc/apparmor.d/local/fusermount3 file touched above. It
           # only takes effect if something includes that file, so check it if
           # fusermount3 denials show up. `|| true` keeps this step best-effort.
-          sudo mkdir -p /etc/apparmor.d/local
-          sudo touch /etc/apparmor.d/local/fusermount3
-          echo 'umount /var/apptainer/**' | sudo tee -a /etc/apptainer/apparmor-local-fusermount3 > /dev/null || true
+          # sudo mkdir -p /etc/apparmor.d/local
+          # sudo touch /etc/apparmor.d/local/fusermount3
+          # echo 'umount /var/apptainer/**' | sudo tee -a /etc/apptainer/apparmor-local-fusermount3 > /dev/null || true
 
-          # Reload AppArmor so the fusermount3 change is picked up (this is
-          # separate from the userns restriction handled by sysctl above)
-          sudo systemctl reload apparmor
+          # # Reload AppArmor so the fusermount3 change is picked up (this is
+          # # separate from the userns restriction handled by sysctl above)
+          # sudo systemctl reload apparmor
 
           # launch.py and tests/run-diagnostics.sh call `singularity`, so make
           # sure that name resolves to apptainer.
