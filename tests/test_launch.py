@@ -18,6 +18,65 @@ from unittest import mock
 import launch
 
 
+class LaunchPolicyMountTests(unittest.TestCase):
+    def test_existing_policy_dirs_mount_read_only_for_relevant_commands(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude = Path(tmpdir) / "claude-code"
+            codex = Path(tmpdir) / "codex"
+            claude.mkdir()
+            codex.mkdir()
+            paths = {
+                "claude": str(claude),
+                "codex": str(codex),
+            }
+            with mock.patch.dict(launch.POLICY_PATHS, paths):
+                for command, expected in (
+                    ("claude", {str(claude)}),
+                    ("codex", {str(codex)}),
+                    ("shell", {str(claude), str(codex)}),
+                    ("pi", set()),
+                    ("omp", set()),
+                ):
+                    with self.subTest(command=command):
+                        launcher = launch.Launcher(launch.parse_args([command]))
+                        mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG[command])
+                        policy_mounts = {
+                            host for host, target, readonly in mounts
+                            if target in paths.values() and host == target and readonly
+                        }
+                        self.assertEqual(policy_mounts, expected)
+
+    def test_no_site_policy_skips_existing_policy_dirs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude = Path(tmpdir) / "claude-code"
+            codex = Path(tmpdir) / "codex"
+            claude.mkdir()
+            codex.mkdir()
+            paths = {"claude": str(claude), "codex": str(codex)}
+            with mock.patch.dict(launch.POLICY_PATHS, paths):
+                for command in ("claude", "codex", "shell"):
+                    with self.subTest(command=command):
+                        launcher = launch.Launcher(
+                            launch.parse_args(["--no-site-policy", command])
+                        )
+                        mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG[command])
+                        self.assertFalse(
+                            {target for _, target, _ in mounts} & set(paths.values())
+                        )
+
+    def test_missing_or_non_dir_policy_path_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = str(Path(tmpdir) / "missing")
+            not_dir = Path(tmpdir) / "file"
+            not_dir.write_text("{}\n")
+            for path in (missing, str(not_dir)):
+                with self.subTest(path=path):
+                    with mock.patch.dict(launch.POLICY_PATHS, {"claude": path}):
+                        launcher = launch.Launcher(launch.parse_args(["claude"]))
+                        mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG["claude"])
+                    self.assertNotIn(path, [target for _, target, _ in mounts])
+
+
 class LaunchAwsEnvTests(unittest.TestCase):
     def make_launcher(self, *argv):
         return launch.Launcher(launch.parse_args(list(argv)))
@@ -584,7 +643,7 @@ class SensitiveEnvironmentTests(unittest.TestCase):
             with self.subTest(backend=backend):
                 inspected = {}
 
-                def inspect_command(cmd, check):
+                def inspect_command(cmd, check, **kwargs):
                     inspected["cmd"] = cmd
                     env_path = Path(cmd[cmd.index("--env-file") + 1])
                     inspected["path"] = env_path
@@ -607,6 +666,120 @@ class SensitiveEnvironmentTests(unittest.TestCase):
                 self.assertIn("AWS_SESSION_TOKEN=session=token\n", inspected["contents"])
                 self.assertFalse(inspected["path"].exists())
                 self.assertFalse(inspected["path"].parent.exists())
+
+    def run_with_host_env(self, launcher, host_env):
+        """Run launcher (non-dry-run) under host_env; return the subprocess.run mock."""
+        with (
+            mock.patch.dict(launch.os.environ, host_env, clear=True),
+            mock.patch.object(
+                launcher, "build_runtime_environment",
+                return_value=({"HOME": "/home/devuser"}, []),
+            ),
+            mock.patch.object(
+                launcher, "build_mounts", return_value=[("/chosen", "/chosen", True)]
+            ),
+            mock.patch.object(launcher, "setup_codex_config"),
+            mock.patch.object(launcher.backend, "check_availability"),
+            mock.patch.object(launcher.backend, "validate_image"),
+            mock.patch("builtins.input") as prompt,
+            mock.patch.object(launch.subprocess, "run") as run,
+        ):
+            launcher.run()
+            prompt.assert_not_called()
+            # Filtering must not leak into this process's environment.
+            self.assertEqual(dict(launch.os.environ), host_env)
+        return run
+
+    def test_singularity_strips_ambient_bind_vars_without_prompting(self):
+        launcher = self.make_launcher("singularity")
+        host_vars = {
+            name: "/host/secret:/secret" for name in launch.SINGULARITY_BIND_ENV_VARS
+        }
+        with self.assertLogs("launch", "WARNING") as logs:
+            run = self.run_with_host_env(launcher, {**host_vars, "KEEP_ME": "yes"})
+        self.assertIn("--allow-host-binds", "\n".join(logs.output))
+        cmd = run.call_args.args[0]
+        passed_env = run.call_args.kwargs["env"]
+        self.assertEqual(passed_env["KEEP_ME"], "yes")
+        self.assertTrue(launch.SINGULARITY_BIND_ENV_VARS.isdisjoint(passed_env))
+        self.assertEqual(cmd[cmd.index("--no-mount") + 1], "hostfs,cwd")
+        self.assertNotIn("/host/secret:/secret", cmd)
+        self.assertIn("/chosen:/chosen:ro", cmd)
+
+    def test_singularity_empty_bind_vars_do_not_warn_or_filter(self):
+        launcher = self.make_launcher("singularity")
+        host_env = {"SINGULARITY_BINDPATH": "", "KEEP_ME": "yes"}
+        with self.assertNoLogs("launch", "WARNING"):
+            run = self.run_with_host_env(launcher, host_env)
+        self.assertIsNone(run.call_args.kwargs["env"])
+
+    def test_singularity_allow_host_binds_keeps_env_and_site_binds(self):
+        launcher = launch.Launcher(
+            launch.parse_args(["--backend", "singularity", "--allow-host-binds", "codex"])
+        )
+        host_vars = {
+            "SINGULARITY_BINDPATH": "/host/data:/data",
+            "APPTAINER_MOUNT": "/host/other:/other",
+        }
+        with self.assertNoLogs("launch", "WARNING"):
+            run = self.run_with_host_env(launcher, host_vars)
+        cmd = run.call_args.args[0]
+        self.assertIsNone(run.call_args.kwargs["env"])
+        self.assertEqual(cmd[cmd.index("--no-mount") + 1], "hostfs,cwd")
+
+    def test_singularity_no_site_binds_only_affects_no_mount(self):
+        launcher = launch.Launcher(
+            launch.parse_args(["--backend", "singularity", "--no-site-binds", "codex"])
+        )
+        with self.assertLogs("launch", "WARNING"):
+            run = self.run_with_host_env(launcher, {"SINGULARITY_BINDPATH": "/h:/c"})
+        cmd = run.call_args.args[0]
+        self.assertEqual(cmd[cmd.index("--no-mount") + 1], "hostfs,cwd,bind-paths")
+        self.assertNotIn("SINGULARITY_BINDPATH", run.call_args.kwargs["env"])
+
+    def test_podman_inherits_environment_unchanged(self):
+        launcher = self.make_launcher("podman")
+        with self.assertNoLogs("launch", "WARNING"):
+            run = self.run_with_host_env(launcher, {"SINGULARITY_BINDPATH": "/h:/c"})
+        self.assertIsNone(run.call_args.kwargs["env"])
+
+    def test_singularity_dry_run_shows_stripped_vars_as_env_unset(self):
+        launcher = self.make_launcher("singularity", dry_run=True)
+        host_env = {"SINGULARITY_BINDPATH": "/h:/c", "APPTAINER_BIND": "/x:/y"}
+        stdout = io.StringIO()
+        with (
+            mock.patch.dict(launch.os.environ, host_env, clear=True),
+            mock.patch.object(
+                launcher, "build_runtime_environment",
+                return_value=({"HOME": "/home/devuser"}, []),
+            ),
+            mock.patch.object(launcher, "build_mounts", return_value=[]),
+            mock.patch("builtins.input") as prompt,
+            self.assertLogs("launch", "WARNING"),
+            contextlib.redirect_stdout(stdout),
+        ):
+            launcher.run()
+        prompt.assert_not_called()
+        printed = shlex.split(stdout.getvalue())
+        self.assertEqual(
+            printed[:6],
+            ["env", "-u", "APPTAINER_BIND", "-u", "SINGULARITY_BINDPATH", "singularity"],
+        )
+
+    def test_singularity_dry_run_without_bind_vars_has_no_env_prefix(self):
+        launcher = self.make_launcher("singularity", dry_run=True)
+        stdout = io.StringIO()
+        with (
+            mock.patch.dict(launch.os.environ, {}, clear=True),
+            mock.patch.object(
+                launcher, "build_runtime_environment",
+                return_value=({"HOME": "/home/devuser"}, []),
+            ),
+            mock.patch.object(launcher, "build_mounts", return_value=[]),
+            contextlib.redirect_stdout(stdout),
+        ):
+            launcher.run()
+        self.assertEqual(shlex.split(stdout.getvalue())[0], "singularity")
 
     def test_singularity_command_does_not_mutate_environment(self):
         launcher = self.make_launcher("singularity", dry_run=True)
@@ -647,7 +820,7 @@ class SensitiveEnvironmentTests(unittest.TestCase):
     def test_sensitive_file_is_removed_after_launch_failure(self):
         inspected = {}
 
-        def fail(cmd, check):
+        def fail(cmd, check, **kwargs):
             inspected["path"] = Path(cmd[cmd.index("--env-file") + 1])
             raise launch.subprocess.CalledProcessError(1, cmd)
 
