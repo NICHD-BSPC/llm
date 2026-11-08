@@ -148,6 +148,17 @@ DEFAULT_IMAGE_TAGS = {
 }
 DEFAULT_CERTS_ENV_VAR = "LLM_DEVCONTAINER_CERTS"
 DEFAULT_MOUNTS_ENV_VAR = "LLM_DEVCONTAINER_MOUNTS"
+
+# If these env vars exist, they can override the containerization we're trying
+# to accomplish here. They'll be inspected later.
+SINGULARITY_BIND_ENV_VARS = {
+    "SINGULARITY_BIND",
+    "SINGULARITY_BINDPATH",
+    "SINGULARITY_MOUNT",
+    "APPTAINER_BIND",
+    "APPTAINER_BINDPATH",
+    "APPTAINER_MOUNT",
+}
 LOGGER = logging.getLogger("launch")
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -392,6 +403,11 @@ class SingularityBackend(Backend):
         # entire /tmp dir, which are both otherwise default behavior for
         # Singularity.
         #
+        # --no-mount prevents some default mounting behavior. If site config
+        # has `mount hostfs = yes`, --contain doesn't block this so we do so
+        # here with `hostfs`. Disable implicit mounting of cwd, since we're
+        # already explicitly mounting it. `bind-paths` controls admin-defined
+        # bind paths.
         #
         # --cleanenv prevents inheriting ALL of the env
         #
@@ -405,6 +421,7 @@ class SingularityBackend(Backend):
             *mask_args,
             "--home", f"{tmp}:{home}",
             "--contain",
+            "--no-mount", "hostfs,cwd" if args.allow_host_binds else "hostfs,bind-paths,cwd",
             "--cleanenv",
             "--no-eval",
             "--pwd", args.workspace_mount or os.getcwd(),
@@ -1226,6 +1243,25 @@ class Launcher:
         """Main entry point for launching a container."""
         args = self.args
 
+        host_binds = SINGULARITY_BIND_ENV_VARS.intersection(os.environ)
+        if (
+            isinstance(self.backend, SingularityBackend)
+            and host_binds
+            and not args.allow_host_binds
+            and not args.dry_run
+        ):
+            LOGGER.warning(
+                "Host bind variables %s are set. Their mounts will be ignored. "
+                "Use --allow-host-binds to enable them (as well as any admin-configured host dirs).",
+                ", ".join(sorted(host_binds)),
+            )
+            try:
+                answer = input("Continue without these mounts? [y/N] ")
+            except EOFError:
+                answer = ""
+            if answer.strip().lower() not in {"y", "yes"}:
+                fatal("Container launch cancelled.")
+
         if not args.dry_run:
             if args.cmd in {"claude", "shell"}:
                 self.setup_claude_config()
@@ -1274,7 +1310,16 @@ class Launcher:
             if args.dry_run:
                 print(shlex.join(cmd))
             else:
-                subprocess.run(cmd, check=True)
+                # Filter out the env vars that would other bind mount dirs that
+                # would weaken containerization
+                if isinstance(self.backend, SingularityBackend):
+                    host_env = os.environ.copy()
+                    if not args.allow_host_binds:
+                        for key in SINGULARITY_BIND_ENV_VARS:
+                            host_env.pop(key, None)
+                    subprocess.run(cmd, check=True, env=host_env)
+                else:
+                    subprocess.run(cmd, check=True)
         finally:
             if sensitive_env_dir:
                 shutil.rmtree(sensitive_env_dir, ignore_errors=True)
@@ -1327,6 +1372,14 @@ def build_parser():
         "--sif-path",
         default=DEFAULT_SINGULARITY_IMAGE,
         help="Singularity image path. Relative paths resolved relative to this script (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--allow-host-binds",
+        action="store_true",
+        help=(
+            "Allow host SINGULARITY_/APPTAINER_ bind variables to mount paths,"
+            "as well as any admin-configured paths (singularity only)"
+        ),
     )
 
     # Workspace
