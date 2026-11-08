@@ -81,10 +81,10 @@ CREDENTIAL_PATHS = {
     "aws": ("~/.aws",),
 }
 
-# Optional host-managed policies, make sure they're in the container.
+# Optional host-managed policy directories.
 POLICY_PATHS = {
-    "claude": "/etc/claude-code/managed-settings.json",
-    "codex": "/etc/codex/requirements.toml",
+    "claude": "/etc/claude-code",
+    "codex": "/etc/codex",
 }
 
 # Codex's ChatGPT login. omp can't read ~/.codex/auth.json directly, but it
@@ -1085,7 +1085,7 @@ class Launcher:
 
             if not self.args.no_site_policy:
                 policy_path = POLICY_PATHS.get(tool)
-                if policy_path and Path(policy_path).is_file():
+                if policy_path and Path(policy_path).is_dir():
                     mounts.append((policy_path, policy_path, True))
 
         mounts.extend(aws_mounts or [])
@@ -1429,7 +1429,7 @@ def build_parser():
     parser.add_argument(
         "--no-site-policy",
         action="store_true",
-        help="Do not mount host site policy files into the container, use at your own risk",
+        help="Do not mount host site policy directories into the container, use at your own risk",
     )
     parser.add_argument(
         "--global-read-only",
