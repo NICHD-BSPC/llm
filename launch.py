@@ -81,6 +81,12 @@ CREDENTIAL_PATHS = {
     "aws": ("~/.aws",),
 }
 
+# Optional host-managed policies, make sure they're in the container.
+POLICY_PATHS = {
+    "claude": "/etc/claude-code/managed-settings.json",
+    "codex": "/etc/codex/requirements.toml",
+}
+
 # Codex's ChatGPT login. omp can't read ~/.codex/auth.json directly, but it
 # accepts the access token (a JWT) for its "openai-codex" provider via this env
 # var.
@@ -1057,6 +1063,11 @@ class Launcher:
         for tool in subcommand_config["credentials"]:
             mounts.extend(self._credential_mounts(tool))
 
+            if not self.args.no_site_policy:
+                policy_path = POLICY_PATHS.get(tool)
+                if policy_path and Path(policy_path).is_file():
+                    mounts.append((policy_path, policy_path, True))
+
         mounts.extend(aws_mounts or [])
 
         normalized_mounts = self._normalize_mounts(mounts)
@@ -1358,6 +1369,11 @@ def build_parser():
             "HOST_PATH:CONTAINER_PATH:ro (repeatable). Defaults from "
             f"${DEFAULT_MOUNTS_ENV_VAR} are also applied when set."
         ),
+    )
+    parser.add_argument(
+        "--no-site-policy",
+        action="store_true",
+        help="Do not mount host site policy files into the container, use at your own risk",
     )
     parser.add_argument(
         "--global-read-only",
