@@ -363,6 +363,20 @@ class SingularityBackend(Backend):
         """Build a Singularity command, loading secrets from an optional env file."""
         args = self.args
 
+        home = env_vars["HOME"]
+        runtime_env = {key: value for key, value in env_vars.items() if key != "HOME"}
+        tmp = tempfile.mkdtemp()
+
+        # Make sure the tempdir is cleaned up when we're done
+        atexit.register(shutil.rmtree, tmp, ignore_errors=True)
+
+        env_args = self.build_env_args(runtime_env)
+        if sensitive_env_file:
+            env_args.extend(["--env-file", sensitive_env_file])
+
+        mount_args = self.build_mount_args(mounts)
+        mask_args = self.build_mask_args(args.mask_targets)
+
         # Notes on Singularity arguments:
         #
         # We want a clean home directory inside the container that still accepts
@@ -374,36 +388,25 @@ class SingularityBackend(Backend):
         # If we were to pass HOME through the environment (--env
         # HOME=/home/devuser) then this triggers a Singularity warning
         #
-        # We need --no-home to avoid mounting the host's home (this is what
-        # Singularity wants to do by default) but still preserves the image's
-        # baked-in home contents.
-        #
         # --contain avoids mounting the host's home as well as the host's
         # entire /tmp dir, which are both otherwise default behavior for
         # Singularity.
         #
-        home = env_vars["HOME"]
-        runtime_env = {key: value for key, value in env_vars.items() if key != "HOME"}
-        tmp = tempfile.mkdtemp()
-        atexit.register(shutil.rmtree, tmp, ignore_errors=True)
-
-        env_args = self.build_env_args(runtime_env)
-        if sensitive_env_file:
-            env_args.extend(["--env-file", sensitive_env_file])
-
-        mount_args = self.build_mount_args(mounts)
-        mask_args = self.build_mask_args(args.mask_targets)
-
+        #
+        # --cleanenv prevents inheriting ALL of the env
+        #
+        # --no-eval preserves environment-file values literally
+        #
         # fmt: off
         return [
             self.command, "exec",
             *env_args,
             *mount_args,
             *mask_args,
-            "--home", f"{tmp}:{home}", # creates an empty dir; we can mount into it.
-            "--contain",  # avoid mounting /tmp
-            "--cleanenv", # don't inherit ALL of the env
-            "--no-eval",  # preserve environment-file values literally
+            "--home", f"{tmp}:{home}",
+            "--contain",
+            "--cleanenv",
+            "--no-eval",
             "--pwd", args.workspace_mount or os.getcwd(),
             args.sif_path,
             *command_args,
