@@ -145,7 +145,10 @@ RUN mkdir -p \
       /home/${USERNAME} && \
     chown -R ${USER_UID}:${USER_GID} \
       /workspace \
-      /home/${USERNAME}
+      /home/${USERNAME} && \
+    # Mount points for host site policy dirs (see POLICY_PATHS in launch.py). \
+    # Singularity can't create bind targets in a read-only SIF. \
+    mkdir -p /etc/claude-code /etc/codex
 
 # Models often reach for python, but on ubuntu 24.04 only python3 is available. So symlink it.
 RUN ln -s /usr/bin/python3 /usr/bin/python
