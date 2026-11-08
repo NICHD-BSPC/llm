@@ -1,6 +1,23 @@
 Changelog
 =========
 
+2026-11-08
+----------
+
+- Singularity launches are more isolated. Host filesystems (``mount hostfs``),
+  admin ``bind path`` entries, and the implicit current-directory mount are
+  disabled. In addition, env vars ``SINGULARITY_``/``APPTAINER_`` ``BIND``,
+  ``BINDPATH`` and ``MOUNT``, which are sometimes set by other tools to
+  implicitly mount directories in the container, are stripped before running.
+  Use ``--allow-host-binds`` and/or ``--allow-site-binds`` to turn these back
+  on, or be explicit with ``--mount`` arguments.
+
+- Host site policy directories (:file:`/etc/claude-code` for Claude Code,
+  :file:`/etc/codex` for Codex) are mounted read-only into the container when
+  they exist. Use ``--no-site-policy`` to skip them (at your own risk). This
+  needs a directory to exist in the container already, so using this **requires
+  an updated image for Singularity**.
+
 2026-10-25
 ----------
 

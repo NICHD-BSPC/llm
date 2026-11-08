@@ -337,6 +337,61 @@ format as ``--mount``. For example:
 The user inside the container is called ``devuser``, and the home directory is
 created at :file:`/home/devuser` inside the container image.
 
+Site policy directories (:file:`/etc/claude-code`, :file:`/etc/codex`) are
+mounted read-only when they exist on the host; see :ref:`site-policy`.
+
+.. _singularity-isolation:
+
+Singularity isolation
+~~~~~~~~~~~~~~~~~~~~~
+
+By default, Singularity/Apptainer brings in a lot of the host: your home
+directory, :file:`/tmp`, the current directory, admin-configured bind paths,
+and sometimes every host filesystem. It will also add any mounts listed in
+``SINGULARITY_BIND``-style environment variables (``SINGULARITY_BINDPATH``,
+``APPTAINER_BINDPATH``, etc). On :nih:`NIH-specific` Biowulf, for example, some
+modules set these when loaded and running :file:`launch.py` would otherwise
+implicitly mount all of those directories.
+
+The default behavior does allow admin-configured bind paths while restricting
+other implicit mounts. Specifically:
+
+- ``--contain`` stops the host home directory and :file:`/tmp` from being
+  mounted.
+
+- ``--no-mount hostfs,cwd`` disables:
+
+  - ``hostfs``: every host filesystem, if the site config sets ``mount hostfs = yes``
+  - ``cwd``: the implicit current-directory mount (it's already mounted
+    explicitly by :file:`launch.py`)
+
+  Admin ``bind path`` entries in
+  :file:`singularity.conf`/:file:`apptainer.conf` remain enabled by default
+  (for example, :file:`/etc/hosts` may be required for a container to function
+  correctly and so would be set here by the site admin).
+
+- ``--cleanenv`` stops the host environment from being copied into the
+  container.
+
+- ``SINGULARITY_BIND``, ``SINGULARITY_BINDPATH``, ``SINGULARITY_MOUNT`` and
+  their ``APPTAINER_`` equivalents are removed from the environment that
+  :cmd:`singularity` itself runs with, so they can't add mounts. A warning
+  lists any that were set that were subsequently ignored.
+
+- ``--allow-host-binds`` keeps the bind variables ``SINGULARITY_BINDPATH`` etc
+  from your environment.
+
+- ``--no-site-binds`` disables admin ``bind path`` entries for more isolation.
+
+The two flags are independent. Neither re-enables ``hostfs``, ``cwd``, the host
+home directory, or :file:`/tmp`. If you want to include more, add them
+explicitly with ``--mount`` or use ``LLM_DEVCONTAINER_MOUNTS``.
+
+See the Apptainer docs on `bind paths and mounts
+<https://apptainer.org/docs/user/latest/bind_paths_and_mounts.html>`__ and
+`configuration files
+<https://apptainer.org/docs/admin/latest/configfiles.html>`__ for background.
+
 .. _conda-only-linux:
 
 Conda envs only work on Linux
