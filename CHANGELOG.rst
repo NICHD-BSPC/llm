@@ -1,6 +1,16 @@
 Changelog
 =========
 
+2026-11-12
+----------
+
+Add fixes for Codex agents, which expect a binary in ``~/.codex`` to be running
+a daemon. This daemon is now installed in a stable location in the container,
+locked to the version of Codex installed in the container. This avoids errors
+about agents not being able to be used due to version mismatches or OS
+differences (a Linux container trying to use a macOS binary), and avoids Codex
+trying to install the daemon on every container run.
+
 2026-11-08
 ----------
 
@@ -28,7 +38,7 @@ credential refresh with a keyboard shortcut.
 ----------
 
 Add ``agentsview.py``, to run
-[agentsview](https://github.com/kenn-io/agentsview) on local or (rsync-pulled)
+`agentsview <https://github.com/kenn-io/agentsview>`__ on local or (rsync-pulled)
 remote agent sessions. This lets you explore current and historical sessions
 from all harnesses supported in this repo.
 
@@ -66,7 +76,7 @@ explicitly.
   entire home dir was not writeable, causing things like pi extension
   installation to fail because it couldn't write to the container's ``~/.npm``
   dir.
-- In Dockerfile, bump ``nodejs`` version and pin ``npm`` version 
+- In Dockerfile, bump ``nodejs`` version and pin ``npm`` version
 - Fix claude installation in the container so it uses provided ``--certs`` when
   on a network using TLS interception.
 - Clean up temp dir for singularity if used
