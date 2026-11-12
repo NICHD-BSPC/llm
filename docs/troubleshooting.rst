@@ -301,6 +301,33 @@ On HPC systems, remember to load the Singularity module before running
 
    module load singularity
 
+**Host directories are missing inside the container:**
+
+If you see a warning like::
+
+   WARNING: Ignoring host bind variables SINGULARITY_BINDPATH; their mounts will not be applied.
+
+it means :cmd:`launch.py` removed bind variables from your environment on
+purpose (see :ref:`singularity-isolation`) to avoid implicitly mounting paths
+inside the container. Site modules sometimes set these variables. However
+admin-configured paths (``bind path`` in :file:`singularity.conf` or
+:file:`apptainer.conf`) remain enabled by default. Options:
+
+- Mount just the paths you need: ``launch.py --mount /data/project codex``, or
+  set them in ``LLM_DEVCONTAINER_MOUNTS``.
+- Keep your bind variables: ``launch.py --allow-host-binds codex``.
+
+Use ``--dry-run`` to see exactly which variables are removed (shown as
+``env -u ...``) and the final ``--no-mount`` value.
+
+**"mount point does not exist" for /etc/claude-code or /etc/codex:**
+
+Site policy directories are mounted at the same path in the container (see
+:ref:`site-policy`). Singularity can only mount onto a directory that already
+exists in the image. Older images don't have these directories, so pull or
+build a newer image. As a temporary workaround, ``--no-site-policy`` skips
+the mount, but then site policy isn't enforced inside the container.
+
 .. _ts-podman:
 
 Podman-specific issues

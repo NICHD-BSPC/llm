@@ -81,6 +81,12 @@ CREDENTIAL_PATHS = {
     "aws": ("~/.aws",),
 }
 
+# Optional host-managed policy directories.
+POLICY_PATHS = {
+    "claude": "/etc/claude-code",
+    "codex": "/etc/codex",
+}
+
 # Codex's ChatGPT login. omp can't read ~/.codex/auth.json directly, but it
 # accepts the access token (a JWT) for its "openai-codex" provider via this env
 # var.
@@ -142,6 +148,17 @@ DEFAULT_IMAGE_TAGS = {
 }
 DEFAULT_CERTS_ENV_VAR = "LLM_DEVCONTAINER_CERTS"
 DEFAULT_MOUNTS_ENV_VAR = "LLM_DEVCONTAINER_MOUNTS"
+
+# If these env vars exist, they can override the containerization we're trying
+# to accomplish here. They'll be inspected later.
+SINGULARITY_BIND_ENV_VARS = {
+    "SINGULARITY_BIND",
+    "SINGULARITY_BINDPATH",
+    "SINGULARITY_MOUNT",
+    "APPTAINER_BIND",
+    "APPTAINER_BINDPATH",
+    "APPTAINER_MOUNT",
+}
 LOGGER = logging.getLogger("launch")
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -255,6 +272,23 @@ class Backend:
         """Validate that the container image exists. Override in subclasses."""
         raise NotImplementedError
 
+    def dropped_host_env(self):
+        """Names of host env vars to strip from the runtime's own environment.
+
+        These are vars the container runtime itself reads (not vars passed into
+        the container). E.g., SINGULARITY_BINDPATH.
+
+        Empty by default; backends override as needed.
+        """
+        return set()
+
+    def host_env(self):
+        """Environment for the runtime process. If it should be inherited unchanged, return None."""
+        dropped = self.dropped_host_env()
+        if not dropped:
+            return None
+        return {k: v for k, v in os.environ.items() if k not in dropped}
+
     def build_command(self, env_vars, mounts, command_args, sensitive_env_file=None):
         """Return the container command and arguments without executing them.
 
@@ -353,9 +387,33 @@ class SingularityBackend(Backend):
         if not sif_path.is_file():
             fatal(f"singularity image '{self.args.sif_path}' is not a file.")
 
+    def dropped_host_env(self):
+        """
+        Remove Singularity/Apptainer env vars that would otherwise override
+        what we're mounting.
+        """
+        # Overrides base class's method.
+        if self.args.allow_host_binds:
+            return set()
+        return {key for key in SINGULARITY_BIND_ENV_VARS if os.environ.get(key)}
+
     def build_command(self, env_vars, mounts, command_args, sensitive_env_file=None):
         """Build a Singularity command, loading secrets from an optional env file."""
         args = self.args
+
+        home = env_vars["HOME"]
+        runtime_env = {key: value for key, value in env_vars.items() if key != "HOME"}
+        tmp = tempfile.mkdtemp()
+
+        # Make sure the tempdir is cleaned up when we're done
+        atexit.register(shutil.rmtree, tmp, ignore_errors=True)
+
+        env_args = self.build_env_args(runtime_env)
+        if sensitive_env_file:
+            env_args.extend(["--env-file", sensitive_env_file])
+
+        mount_args = self.build_mount_args(mounts)
+        mask_args = self.build_mask_args(args.mask_targets)
 
         # Notes on Singularity arguments:
         #
@@ -368,25 +426,27 @@ class SingularityBackend(Backend):
         # If we were to pass HOME through the environment (--env
         # HOME=/home/devuser) then this triggers a Singularity warning
         #
-        # We need --no-home to avoid mounting the host's home (this is what
-        # Singularity wants to do by default) but still preserves the image's
-        # baked-in home contents.
-        #
         # --contain avoids mounting the host's home as well as the host's
         # entire /tmp dir, which are both otherwise default behavior for
         # Singularity.
         #
-        home = env_vars["HOME"]
-        runtime_env = {key: value for key, value in env_vars.items() if key != "HOME"}
-        tmp = tempfile.mkdtemp()
-        atexit.register(shutil.rmtree, tmp, ignore_errors=True)
-
-        env_args = self.build_env_args(runtime_env)
-        if sensitive_env_file:
-            env_args.extend(["--env-file", sensitive_env_file])
-
-        mount_args = self.build_mount_args(mounts)
-        mask_args = self.build_mask_args(args.mask_targets)
+        # --no-mount prevents some default mounting behavior:
+        #   If site config has `mount hostfs = yes`, --contain doesn't block
+        #   this so we do so here with `hostfs`.
+        #
+        #   Disable implicit mounting of cwd, since we're already explicitly
+        #   mounting it.
+        #
+        #   `bind-paths` disables admin-defined `bind path` entries from
+        #   singularity.conf/apptainer.conf when --no-site-binds is configured.
+        #
+        # --cleanenv prevents inheriting ALL of the env
+        #
+        # --no-eval preserves environment-file values literally
+        #
+        no_mount = ["hostfs", "cwd"]
+        if args.no_site_binds:
+            no_mount.append("bind-paths")
 
         # fmt: off
         return [
@@ -394,10 +454,11 @@ class SingularityBackend(Backend):
             *env_args,
             *mount_args,
             *mask_args,
-            "--home", f"{tmp}:{home}", # creates an empty dir; we can mount into it.
-            "--contain",  # avoid mounting /tmp
-            "--cleanenv", # don't inherit ALL of the env
-            "--no-eval",  # preserve environment-file values literally
+            "--home", f"{tmp}:{home}",
+            "--contain",
+            "--no-mount", ",".join(no_mount),
+            "--cleanenv",
+            "--no-eval",
             "--pwd", args.workspace_mount or os.getcwd(),
             args.sif_path,
             *command_args,
@@ -1057,6 +1118,11 @@ class Launcher:
         for tool in subcommand_config["credentials"]:
             mounts.extend(self._credential_mounts(tool))
 
+            if not self.args.no_site_policy:
+                policy_path = POLICY_PATHS.get(tool)
+                if policy_path and Path(policy_path).is_dir():
+                    mounts.append((policy_path, policy_path, True))
+
         mounts.extend(aws_mounts or [])
 
         normalized_mounts = self._normalize_mounts(mounts)
@@ -1212,6 +1278,15 @@ class Launcher:
         """Main entry point for launching a container."""
         args = self.args
 
+        dropped_env = sorted(self.backend.dropped_host_env())
+        if dropped_env:
+            LOGGER.warning(
+                "Ignoring host bind variables %s; their mounts will not be "
+                "applied. Use --allow-host-binds to keep them, or --mount for "
+                "specific paths.",
+                ", ".join(dropped_env),
+            )
+
         if not args.dry_run:
             if args.cmd in {"claude", "shell"}:
                 self.setup_claude_config()
@@ -1258,9 +1333,14 @@ class Launcher:
             )
 
             if args.dry_run:
-                print(shlex.join(cmd))
+                # Show stripped host vars as `env -u` so the printed command
+                # reproduces what would actually run.
+                unset_args = [arg for key in dropped_env for arg in ("-u", key)]
+                print(shlex.join(["env", *unset_args, *cmd] if unset_args else cmd))
             else:
-                subprocess.run(cmd, check=True)
+                # Strip host env vars that would make the runtime add mounts
+                # beyond the ones we chose, weakening isolation.
+                subprocess.run(cmd, check=True, env=self.backend.host_env())
         finally:
             if sensitive_env_dir:
                 shutil.rmtree(sensitive_env_dir, ignore_errors=True)
@@ -1314,6 +1394,24 @@ def build_parser():
         default=DEFAULT_SINGULARITY_IMAGE,
         help="Singularity image path. Relative paths resolved relative to this script (default: %(default)s)",
     )
+    parser.add_argument(
+        "--allow-host-binds",
+        action="store_true",
+        help=(
+            "Keep host SINGULARITY_/APPTAINER_ BIND/BINDPATH/MOUNT variables, "
+            "letting them add mounts. By default they are removed from the "
+            "environment of singularity (singularity only)"
+        ),
+    )
+    parser.add_argument(
+        "--no-site-binds",
+        action="store_true",
+        help=(
+            "Disable admin-configured 'bind path' entries from "
+            "singularity.conf/apptainer.conf "
+            "for more isolation (singularity only; allowed by default)."
+        ),
+    )
 
     # Workspace
     parser.add_argument(
@@ -1358,6 +1456,11 @@ def build_parser():
             "HOST_PATH:CONTAINER_PATH:ro (repeatable). Defaults from "
             f"${DEFAULT_MOUNTS_ENV_VAR} are also applied when set."
         ),
+    )
+    parser.add_argument(
+        "--no-site-policy",
+        action="store_true",
+        help="Do not mount host site policy directories into the container, use at your own risk",
     )
     parser.add_argument(
         "--global-read-only",

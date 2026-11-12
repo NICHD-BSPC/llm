@@ -512,6 +512,45 @@ Using ``--conda-env`` is a shortcut for the following:
      --prepend-path ~/conda/envs/my-env/bin \
      codex
 
+.. _site-policy:
+
+Site policy directories
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Admins can enforce settings for Claude Code and Codex by putting policy files in
+system directories on the host. When those directories exist on the host,
+:file:`launch.py` mounts them **read-only** at the same path inside the
+container, so the agent follows the same site policy it would outside the
+container:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Subcommand
+     - Host directory mounted
+   * - ``claude``
+     - :file:`/etc/claude-code` (e.g. :file:`managed-settings.json`, :file:`managed-mcp.json`)
+   * - ``codex``
+     - :file:`/etc/codex` (e.g. :file:`requirements.toml`, :file:`managed_config.toml`)
+   * - ``shell``
+     - both
+
+If a directory doesn't exist on the host, nothing is mounted for it. The whole
+directory is mounted so any admin updates will show up in running containers.
+
+To skip these mounts, use ``--no-site-policy``. Only do this if you know
+your site allows it:
+
+.. code-block:: bash
+
+   launch.py --no-site-policy codex
+
+.. note::
+
+   Only the Linux paths above are checked. On macOS, Claude Code's managed
+   settings live under :file:`/Library/Application Support/ClaudeCode` and are
+   not currently mounted.
+
 Environment and certificates
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -556,6 +595,33 @@ without running. Useful for debugging (see also :ref:`ts-dry-run`):
 .. code-block:: bash
 
    launch.py --dry-run codex
+
+With Singularity, if any host bind variables would be removed (see
+:ref:`singularity-isolation`), the printed command starts with ``env -u VAR``
+for each of them. That way the printed command can be copied and run exactly as
+:file:`launch.py` would run it:
+
+.. code-block:: console
+
+   $ SINGULARITY_BINDPATH=/data launch.py --dry-run codex
+   WARNING: Ignoring host bind variables SINGULARITY_BINDPATH; ...
+   env -u SINGULARITY_BINDPATH singularity exec ... --no-mount hostfs,cwd ...
+
+Singularity-only bind options (see :ref:`singularity-isolation` for details):
+
+.. code-block:: bash
+
+   # keep SINGULARITY_/APPTAINER_ BIND, BINDPATH, and MOUNT variables from your environment
+   launch.py --allow-host-binds codex
+
+   # disable admin-configured `bind path` entries from
+   # singularity.conf/apptainer.conf for additional isolation. Use with
+   # caution.
+   launch.py --no-site-binds codex
+
+Admin-configured bind paths are allowed by default. If you only need one or two
+additional host paths, ``--mount`` is usually a better choice than
+``--allow-host-binds``.
 
 When developing locally or using other containers, specify the image name
 (Podman) or SIF name (Singularity):
