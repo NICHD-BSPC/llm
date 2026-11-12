@@ -609,6 +609,68 @@ class AwsCredentialModeMatrixTests(unittest.TestCase):
         )
 
 
+class CodexDaemonIsolationTests(unittest.TestCase):
+    def test_only_codex_credentialed_commands_get_daemon_overlays(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(launch.Path, "home", return_value=Path(tmpdir)):
+                for command in ("codex", "shell", "claude", "pi", "omp"):
+                    with self.subTest(command=command):
+                        launcher = launch.Launcher(launch.parse_args([command]))
+                        targets = {
+                            target for _, target, _ in
+                            launcher.build_mounts(launch.SUBCOMMAND_CONFIG[command])
+                        }
+                        has_overlay = (
+                            "/home/devuser/.codex/packages/app-server-daemon" in targets
+                        )
+                        self.assertEqual(has_overlay, command in {"codex", "shell"})
+
+    def test_launches_keep_host_daemon_and_other_containers_separate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            host_home = Path(tmpdir)
+            package = host_home / ".codex/packages/app-server-daemon"
+            package.mkdir(parents=True)
+            marker = package / "host-version"
+            marker.write_text("older host installation")
+
+            with (
+                mock.patch.object(launch.Path, "home", return_value=host_home),
+                mock.patch.dict(launch.os.environ, {"HOME": str(host_home)}),
+            ):
+                for backend in ("podman", "singularity"):
+                    previous_sources = set()
+                    for command in ("codex", "shell"):
+                        launcher = launch.Launcher(
+                            launch.parse_args(["--backend", backend, command])
+                        )
+                        with mock.patch.object(launch.LOGGER, "warning") as warning:
+                            mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG[command])
+                        warning.assert_not_called()
+                        mounted = {target: (Path(source), readonly) for source, target, readonly in mounts}
+                        self.assertEqual(
+                            mounted["/home/devuser/.codex"], (host_home / ".codex", False)
+                        )
+                        for relative_path in (
+                            "packages/app-server-daemon", "app-server-daemon", "app-server-control"
+                        ):
+                            source, readonly = mounted[f"/home/devuser/.codex/{relative_path}"]
+                            self.assertFalse(readonly)
+                            if relative_path == "packages/app-server-daemon":
+                                current = source / "current"
+                                self.assertEqual(list(source.iterdir()), [current])
+                                self.assertEqual(
+                                    os.readlink(current), launch.CODEX_DAEMON_PACKAGE
+                                )
+                            else:
+                                self.assertEqual(list(source.iterdir()), [])
+                            self.assertFalse(source.is_relative_to(host_home / ".codex"))
+                            self.assertNotIn(source, previous_sources)
+                            previous_sources.add(source)
+                            (source / "container-state").write_text("private")
+            self.assertEqual(marker.read_text(), "older host installation")
+            self.assertEqual(list(package.iterdir()), [marker])
+
+
 class SensitiveEnvironmentTests(unittest.TestCase):
     def make_launcher(self, backend="podman", dry_run=False):
         argv = ["--backend", backend]
