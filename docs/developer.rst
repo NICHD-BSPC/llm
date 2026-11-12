@@ -32,12 +32,15 @@ When running :cmd:`build.py`:
 
 - The default image name is ``llm-devcontainer``. Change it with
   ``--image-name``.
-- The default platform is ``linux/amd64``. On ARM64 macOS this runs under
-  emulation, which is usually acceptable because CPU is not the bottleneck.
-  Change it with ``--arch``.
+- The default platform matches the host architecture (``linux/arm64`` on
+  Apple Silicon, otherwise ``linux/amd64``). Change it with ``--arch``, and
+  pass the same value to :cmd:`launch.py --arch`.
 - Cache is used by default. To force a fresh rebuild, use ``--no-cache``.
 - If you do not pass explicit tool versions, the image installs the latest
-  available Claude Code, Codex, and Pi releases.
+  available Claude Code, Codex, and Pi releases. To pin them, pass all three of
+  ``--claude-version``, ``--codex-version``, and ``--pi-version``.
+- Certificates are only used if passed explicitly with ``--certs``;
+  :cmd:`build.py` does not read ``LLM_DEVCONTAINER_CERTS``.
 
 .. tip::
 
@@ -80,8 +83,17 @@ Steps to support a new agent in the container and :file:`launch.py`:
 - Add credential paths to ``CREDENTIAL_PATHS`` in :file:`launch.py` (see :ref:`launch` for current defaults)
 - Add command and credentials reference to ``SUBCOMMAND_CONFIG`` in :file:`launch.py`
 - Append credentials to shell section of ``SUBCOMMAND_CONFIG`` as well
-- Document credential and config files in :doc:`config-files`
+- Add a per-harness default tag to ``DEFAULT_IMAGE_TAGS`` in :file:`launch.py`
+- Add a ``Launcher.setup_<tool>_config()`` method if the tool's config
+  directory/files need to exist before mounting
+- If :ref:`refresh` should manage its credentials, add them to
+  ``CREDENTIAL_PATHS`` in :file:`refresh.py` and to the ``--kind`` choices
 - If using Bedrock, add a detection method to ``Launcher._bedrock_enabled()``.
   Make up a new env var if needed
 - Pass thru ``Launcher._host_env_with_prefixes()`` if relevant
-- Document
+- In :file:`.github/workflows/main.yml`, extract the tool version and add a
+  ``publish_harness_tags`` call so ``<tool>-latest`` and ``<tool>-<version>``
+  tags are published
+- Document credential and config files in :doc:`config-files`, add a
+  getting-started page (or section), and update :doc:`troubleshooting` and
+  :doc:`CHANGELOG`

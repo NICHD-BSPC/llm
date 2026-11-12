@@ -10,8 +10,6 @@ Then see :doc:`tools` for details and examples for using :ref:`refresh` and
 
 The rest of this page has details and additional context on containers.
 
-.. _running-containers-resuming:
-
 
 What's a container?
 -------------------
@@ -71,8 +69,9 @@ system like NIH's Biowulf.
 Podman, Docker, Singularity?
 ----------------------------
 
-Docker is a popular container runtime. However, it has a restrictive license
-and may require a paid license for use at NIH.
+Docker is a popular container runtime. Docker Engine itself is open source, but
+Docker Desktop (the usual way to run Docker on a Mac) requires a paid
+subscription for use at larger organizations such as NIH.
 
 Podman is a drop-in replacement for Docker with a more permissive license.
 Unlike Docker, Podman does not need to run containers as root. Install Podman
@@ -153,7 +152,10 @@ without an update!), so the system libraries are not expected to get stale. You
 can always pass ``--tag latest`` to :ref:`launch` to always use the newest
 overall image instead.
 
-The GitHub Actions container workflow builds ``linux/amd64`` images only. Podman automatically handles this different architecture on macOS. There is a performance hit, but the limiting factor of these harnesses is model calling, not CPU usage.
+The GitHub Actions container workflow builds native ``linux/amd64`` and
+``linux/arm64`` images and publishes them under a single multi-arch tag, so
+Podman on an Apple Silicon Mac pulls the native arm64 image automatically. The
+Singularity SIF is built from the amd64 image only.
 
 The GitHub Actions workflow first builds and tests the Podman image, then
 derives the version tags by running the built container and reading ``claude
@@ -177,7 +179,7 @@ this to get a bash shell, from which you can start one of the agents:
 
 .. code-block:: bash
 
-   singularity exec ghcr.io/nichd-bspc/llm-sif bash
+   singularity exec oras://ghcr.io/nichd-bspc/llm-sif:latest bash
 
 .. warning::
 
@@ -298,12 +300,12 @@ The goal of a container is to isolate it from the rest of the system. But in
 order to be useful, we need to allow *some* parts of the system into the
 container. For example, we need to provide credentials to an agent running inside
 a container, and we typically want to add the current working directory inside
-the model so that we can work on the files there.
+the container so that we can work on the files there.
 
 We can mount files from the host into the container when first starting the
 container by giving a source location on the host and an intended destination
 path inside the container. The :ref:`launch` script does this automatically for
-the working directory and the crendential files, and allows you to specify
+the working directory and the credential files, and allows you to specify
 additional paths if needed with ``--mount``.
 
 The host's home directory is not mounted. Even though Singularity mounts it by
@@ -342,7 +344,7 @@ created at :file:`/home/devuser` inside the container image.
 Conda envs only work on Linux
 -----------------------------
 
-The container is ``linux/x86_64`` architecture. If the host matches that
+The container is a Linux container. If the host is also Linux with a matching
 architecture (like NIH's Biowulf) you can mount directories into the container
 using ``--path-prepend`` or ``--conda-env``. This is a convenient way to
 provide development tools, like everything inside a conda environment, inside
@@ -355,17 +357,18 @@ the container without needing to change the image.
      --mount ~/data/examples \
      codex
 
-However, if you mount binaries from a macOS ARM64 host to the Linux AMD64
-container, they will not run inside the container because of the architecture
-mismatch. The primary limitation is that the macOS filesystem *is not
-case-sensitive*. So common conda packages, like ``ncurses``, that rely on
-case-senstive filenames, will not install.
+On a macOS host, there are two problems:
 
-This case-insensitivity is on the host macOS side. A container running on
-a macOS host is still affected by this. So even running conda inside
-a container to build a ``linux/amd64`` env will fail. Typically tools
-depending on ``ncurses`` -- of which there are many -- will fail because
-ncurses itself requires case sensitivity.
+1. **macOS binaries can't run in a Linux container.** A conda env created on
+   macOS contains Mach-O executables, which Linux can't run regardless of CPU
+   architecture. :cmd:`launch.py --conda-env` detects this and refuses to
+   mount such an env.
+2. **The macOS filesystem is not case-sensitive** (by default). So you can't
+   simply build a Linux env from inside a container onto the macOS
+   filesystem: common conda packages, like ``ncurses``, rely on case-sensitive
+   filenames and will fail to install. This is a property of the host
+   filesystem, so a container running on a macOS host is still affected by it.
+   Many tools depend on ``ncurses``.
 
 There is a workaround, but it's not straightforward...
 
@@ -404,6 +407,12 @@ it's sort of the parent container of the normal containers we use. We do this
 by re-making the podman machine, including its default mounts but also our new
 one (you'll need to change your volume name to the one you created above):
 
+.. warning::
+
+   ``podman machine rm --force`` deletes the Podman VM **including all pulled
+   images, containers, and volumes** (e.g. the agentsview data volume). Images
+   will be re-downloaded on next launch.
+
 .. code-block:: bash
 
   # Re-initialize the podman machine with our new mount. Needs to happen every
@@ -416,16 +425,18 @@ one (you'll need to change your volume name to the one you created above):
     --volume /Volumes/devel:/Volumes/devel
   podman machine start
 
-**This needs to be re-run every time Podman Desktop restarts**, because Podman
-Desktop uses default mounts that do not include our custom one. There does not
-appear to be a config file we can change to make this more permanent.
+**In our experience this needs to be re-run every time Podman Desktop
+restarts**, because Podman Desktop uses default mounts that do not include our
+custom one. There does not appear to be a config file we can change to make
+this more permanent. Check with :cmd:`podman machine inspect` whether
+:file:`/Volumes/devel` is still listed before re-running.
 
 **3. Install conda on the case-sensitive volume (one-time setup).**
 
 Here is how to create and mount the right directories to be able to install
 a version of conda to that case-sensitive directory, using the Linux container.
-This effectively creates a ``linux/amd64``-usable conda installation we can use
-to create ``linux/amd64`` environments. Note that this method makes separate
+This effectively creates a Linux-usable conda installation we can use
+to create Linux environments (matching the container's architecture). Note that this method makes separate
 cache and conda dirs to mount into the container's home directory to avoid
 contaminating the host's directories.
 
@@ -454,7 +465,7 @@ This command:
 
 **4. Create environments (as needed).**
 
-Now that conda is installed, for conda env creation and mainentance you can use
+Now that conda is installed, for conda env creation and maintenance you can use
 the following:
 
 .. code-block::

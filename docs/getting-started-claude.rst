@@ -38,16 +38,17 @@ Step 2. Export env vars
 
 Export these environment variables, for example in :file:`~/.bashrc`:
 
-   .. code-block:: bash
+.. code-block:: bash
 
-      # Env vars that will be passed to Claude Code
-      export CLAUDE_CODE_USE_BEDROCK=1                  # Tells Claude to expect Bedrock
-      export CLAUDE_CODE_NO_FLICKER=1                   # Improves interface
-      export CLAUDE_CODE_DISABLE_AUTOUPDATER=1          # Don't autoupdate
-      export CLAUDE_CODE_DISABLE_INSTALLATION_CHECKS=1  # Don't check installation
+   # Env vars that will be passed to Claude Code
+   export CLAUDE_CODE_USE_BEDROCK=1  # Tells Claude to expect Bedrock
+   export CLAUDE_CODE_NO_FLICKER=1   # Improves interface
 
-      # This should have been exported already during the previous step
-      export AWS_REGION=us-east-1
+   # This should have been exported already during the previous step
+   export AWS_REGION=us-east-1
+
+You do not need to disable Claude Code's auto-updater: the container image
+installs Claude Code from its apt package, so updates come with new images.
 
 .. tip::
 
@@ -71,7 +72,7 @@ Step 3. Claude Code locally (Podman container)
 
 Since we're using AWS SSO to authenticate, **we do not need to install Claude
 Code locally**. This is in contrast to Codex, which we had to install locally in
-order to be able to use `codex login`.
+order to be able to use :cmd:`codex login`.
 
 1. On a local Mac, ensure you have Podman Desktop installed and running and
    that you are in a directory you are comfortable giving Claude access to.
@@ -91,7 +92,7 @@ order to be able to use `codex login`.
    - :cmd:`launch.py` detected that you're running on a Mac and that Podman is the
      right container runtime
    - If you didn't have any previous Claude Code config, it created
-     a :file:`~/.claude.json` file with an empty JSON array (``{}``) and/or an
+     a :file:`~/.claude.json` file with an empty JSON object (``{}``) and/or an
      empty :file:`~/.claude` directory.
    - The default podman image was downloaded if needed, a container was created
    - The :file:`~/.claude.json` file and any existing :file:`~/.claude` directory was mounted into the container
@@ -111,7 +112,7 @@ Step 4. Claude Code remote (Singularity)
 
       refresh.py --remote biowulf.nih.gov
 
-2. Log in to the remote system. If Using NIH's Biowulf, get an interactive node and load the Singularity module:
+2. Log in to the remote system. If using NIH's Biowulf, get an interactive node and load the Singularity module:
 
    .. code-block:: bash
 
@@ -175,7 +176,7 @@ specific version or use the latest overall image, pass ``--image-name`` or
 Next steps
 ----------
 
-You can optionally move on to getting set up with Pi, for a vendor- and model-agnostic agent using Bedrock.
+You can optionally move on to :doc:`getting-started-pi`, for vendor- and model-agnostic agents using Bedrock.
 
 Otherwise, you should read up on the following documentation:
 

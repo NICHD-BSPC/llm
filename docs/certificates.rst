@@ -23,7 +23,7 @@ the NIH network):
 
 .. code-block:: bash
 
-   curl -fSsL -o ~/.certs.pem http://nihdpkicrl.nih.gov/certdata/DPKI-2023-Intermediate-rekey-FullChainBase64.crt
+   curl -fSsL -o ~/certs.pem http://nihdpkicrl.nih.gov/certdata/DPKI-2023-Intermediate-rekey-FullChainBase64.crt
 
 Then either:
 
@@ -31,15 +31,17 @@ Then either:
 
    .. code-block:: bash
 
-      export LLM_DEVCONTAINER_CERTS=~/.certs.pem
+      export LLM_DEVCONTAINER_CERTS=~/certs.pem
 
 2. Or pass ``--certs`` to :cmd:`launch.py` for one-off use:
 
    .. code-block:: bash
 
-      launch.py --certs ~/.certs.pem codex
+      launch.py --certs ~/certs.pem codex
 
-The same file is also used during image builds; see :doc:`developer`.
+The environment variable is only read by :cmd:`launch.py`. To use the same
+file during image builds, pass it explicitly with :cmd:`build.py --certs
+~/certs.pem`; see :doc:`developer`.
 
 If you are still having connection issues after setting up certificates, see
 :ref:`ts-ssl-tls` for more troubleshooting steps.

@@ -41,6 +41,9 @@ the critical ones (on **each** system you are running containers on):
    # For Pi with Bedrock
    echo $PI_USE_BEDROCK            # should be 1
 
+   # For OMP with Bedrock
+   echo $OMP_USE_BEDROCK           # should be 1
+
 If any of these are blank, add them to your :file:`~/.bashrc` (or equivalent)
 and source it or open a new terminal.
 
@@ -59,7 +62,10 @@ and source it or open a new terminal.
    ls ~/.claude.json
    ls -d ~/.claude
 
-If any are missing, run :ref:`refresh` to create them.
+If :file:`~/.codex/auth.json` or the :file:`~/.aws/llm-export` files are
+missing, run :ref:`refresh` to create them. :file:`~/.claude.json` and
+:file:`~/.claude` are created by :ref:`launch` the first time you run
+:cmd:`launch.py claude`.
 
 .. _ts-container-runtime:
 
@@ -103,20 +109,22 @@ a custom ``--image-name``, make sure you have either built it locally with
 :ref:`build` or that it is available on the registry.
 
 In some cases, you may need to do an explicit :cmd:`podman pull` to get Podman
-to recognize the latest image:
+to recognize the latest image. Pull the tag for the harness you are launching
+(``codex-latest``, ``claude-latest``, ``pi-latest``, or ``omp-latest``), or
+``latest`` if you use :cmd:`launch.py --tag latest` or :cmd:`launch.py shell`:
 
-  .. code-block:: bash
+.. code-block:: bash
 
-     podman pull ghcr.io/nichd-bspc/llm:latest
+   podman pull ghcr.io/nichd-bspc/llm:codex-latest
 
 **Singularity:**
 
 The default SIF is pulled automatically from GitHub Container Registry. If you
 specified a custom ``--sif-path``, make sure the file exists:
 
-  .. code-block:: bash
+.. code-block:: bash
 
-     ls -lh /path/to/your.sif
+   ls -lh /path/to/your.sif
 
 - If using ``oras://`` URIs on a system that requires authentication to
   the registry, check that you can reach it.
@@ -208,10 +216,10 @@ For example:
 .. code-block:: text
 
    ⚠ MCP client for `codex_apps` failed to start: MCP startup failed: handshaking with MCP server failed: Send message error Transport [rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client
-  ::StreamableHttpClientWorker<codex_rmcp_client::http_client_adapter::StreamableHttpClientAdapter>>] error: Client error: HTTP request failed: http/request failed: error sending request for url
-  (https://chatgpt.com/backend-api/wham/apps), when send initialize request
+   ::StreamableHttpClientWorker<codex_rmcp_client::http_client_adapter::StreamableHttpClientAdapter>>] error: Client error: HTTP request failed: http/request failed: error sending request for url
+   (https://chatgpt.com/backend-api/wham/apps), when send initialize request
 
-  ⚠ MCP startup incomplete (failed: codex_apps)
+   ⚠ MCP startup incomplete (failed: codex_apps)
 
 The issue is that the container does not have access to host-installed
 enterprise certificates. See :doc:`certificates` for full details.
@@ -249,13 +257,6 @@ do not appear on the remote:
   .. code-block:: bash
 
      refresh.py --full --remote biowulf.nih.gov
-
-- If the remote system should use exported short-lived AWS credentials instead
-  of trying to refresh SSO itself, push those explicitly:
-
-  .. code-block:: bash
-
-     refresh.py --remote biowulf.nih.gov
 
 **Environment variables not set on remote:**
 
@@ -322,23 +323,24 @@ If pulling from GHCR fails, check network connectivity and authentication:
 
 .. code-block:: bash
 
-   podman pull ghcr.io/nichd-bspc/llm:latest
+   podman pull ghcr.io/nichd-bspc/llm:codex-latest
 
 The images are public, so no authentication should be needed. If on VPN,
 check for TLS interception issues (:ref:`ts-ssl-tls`).
 
 **Architecture mismatch:**
 
-The container is built for ``linux/amd64``. On Apple Silicon Macs, Podman
-handles the emulation transparently, but you may see a warning like this, which
-is expected:
+The published images are multi-arch (``linux/amd64`` and ``linux/arm64``), and
+:cmd:`launch.py` requests the host's architecture by default, so Apple Silicon
+Macs run the native arm64 image. If you see a warning like this:
 
 .. code-block:: text
 
    WARNING: image platform (linux/amd64) does not match the expected platform (linux/arm64)
 
-If you encounter architecture-related errors, ensure your Podman machine is
-configured for ``amd64`` emulation.
+you are probably using a locally built or custom image built for a different
+architecture. Rebuild it for the host architecture (:cmd:`build.py` does this by
+default), or pass a matching ``--arch`` to :cmd:`launch.py`.
 
 .. _ts-conda:
 
@@ -348,14 +350,14 @@ Conda environments in containers
 **Symptom:** Binaries from a mounted conda environment do not work inside the
 container, or packages fail to install.
 
-Mounting conda environments only works on Linux hosts where the architecture
-matches the container (``linux/x86_64``). On macOS with Apple Silicon, the
-host conda environment is ``arm64`` and the binaries will not run inside the
-``amd64`` container.
+Mounting conda environments only works on Linux hosts, where the environment
+contains Linux binaries matching the container's architecture. On macOS, the
+host conda environment contains macOS (Mach-O) binaries, which cannot run in
+the Linux container; :cmd:`launch.py` detects this and refuses to mount them.
 
 Additionally, macOS filesystems are case-insensitive, which prevents some
-conda packages (like ``ncurses``) from working even if the architecture
-matched. See :ref:`conda-only-linux` for a workaround.
+conda packages (like ``ncurses``) from installing even when building a Linux
+env from inside the container. See :ref:`conda-only-linux` for a workaround.
 
 On a compatible Linux host:
 
@@ -401,7 +403,7 @@ Claude Code-specific issues
     ``Update available! Run: your package manager update command``
 
   This is usually a false positive. The container uses the *stable* version of
-  Claude Code as published to the Debain repository. To double-check you can
+  Claude Code as published to the Debian repository. To double-check you can
   run the :cmd:`/doctor` command from within Claude Code. For example, at the
   time of writing these docs, that update message was being shown but
   :cmd:`/doctor` showed the following, indicating that the current version is
@@ -442,6 +444,12 @@ Codex-specific issues
   This is usually due to setting certificates with ``--certs`` or
   ``$LLM_DEVCONTAINER_CERTS`` when they are not needed. Omit ``--certs`` and
   unset ``LLM_DEVCONTAINER_CERTS``.
+
+
+- **Error loading configuration: Failed to load cloud config bundle (workspace-managed policies).**
+
+  This is usually due to NOT setting certificates when they are in fact needed.
+  Use ``--certs`` or ``LLM_DEVCONTAINER_CERTS``.
 
 - **Refresh token was already used:**
 
