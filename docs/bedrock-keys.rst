@@ -11,9 +11,9 @@ https://github.com/aws/aws-bedrock-token-generator-python, or use
 
 :nih:`NIH-specific` In practice, this token expires **every hour**. Technically,
 it expires in 12 hours or when the role session credentials of the creator
-expire, whichever happens sooner. The SSO session itself lasts roughly eight
-hours; see :doc:`aws-sso`. But the underlying role session credentials for the
-default ``AWSPowerUser`` role expire every hour, and this is what sets the
+expire, whichever happens sooner. The SSO session itself lasts longer (see
+:doc:`aws-sso`), but the underlying role session credentials for the default
+``AWSPowerUserAccess`` role expire every hour, and this is what sets the
 practical token expiration time.
 
 Tools using the AWS SDK refresh those automatically, but the Bedrock bearer
@@ -23,14 +23,14 @@ of about one hour. :cmd:`refresh.py` prints the expiration context.
 .. note::
 
    Increasing the Bedrock token expiration would likely require AWS admins to
-   increase the timeout for the ``AWSPowerUser`` role beyond one hour.
+   increase the session duration for the ``AWSPowerUserAccess`` role beyond one hour.
 
 Prerequisites
 -------------
 
 - AWS SSO is set up; see :doc:`aws-sso`.
 - You have successfully authenticated with :cmd:`aws sso login`.
-- :cmd:`aws-bedrock-token-generator-python` is installed. If you use the
+- The ``aws-bedrock-token-generator`` Python package is installed. If you use the
   conda environment from :file:`env.yml` in the repository root, it is
   already included there.
 
@@ -45,7 +45,7 @@ The usual convention is to place this token in the
 
 .. code-block:: bash
 
-   eval "$(./refresh.py --bedrock-export)"
+   eval "$(refresh.py --bedrock-export)"
 
 The script prints an ``export AWS_BEARER_TOKEN_BEDROCK=...`` command, and
 ``eval`` runs that export in the current shell. Treat the token as a secret: do

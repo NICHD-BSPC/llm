@@ -18,7 +18,7 @@ Step 1: Codex locally ("native" installation)
 ---------------------------------------------
 
 The minimal first step is to confirm that the Codex CLI works locally, without
-a container. This is the the so-called "native" installation. Even if you are planning on
+a container. This is the so-called "native" installation. Even if you are planning on
 only calling models from Codex inside a container, this native version still
 needs to be set up because we need to use it when refreshing login credentials.
 
@@ -35,7 +35,7 @@ needs to be set up because we need to use it when refreshing login credentials.
 8. Start Codex again. This time you should not need to log in, and submitting
    a test prompt should again work.
 
-.. tip:: 
+.. tip::
 
    You know it worked when you can start Codex from the command line without
    needing to log in again, send a prompt, and get a response.
@@ -74,7 +74,7 @@ above, do the following:
 1. Install `Podman Desktop <https://podman-desktop.io/>`__ and ensure it is running. **NOTE: only tested on a Mac.**
 2. Download the :file:`launch.py` script from this repo (see :ref:`getscripts`
    for details on this).
-3. Navigate to a directory your are comfortable letting Codex see
+3. Navigate to a directory you are comfortable letting Codex see
 4. Run the following; it may take a few seconds the first time because it needs
    to download and prepare the container:
 
@@ -100,10 +100,11 @@ above, do the following:
    - Podman started up the image to create a container
    - During this creation process, we automatically mounted the current working
      directory into the container (done automatically by default by the launch script)
-   - We also automatically mounted your :file:`~/.codex/auth.json` into the
-     container so that the isolated Codex instance in the container could log in
-     (also done by the launch script). This is how the instance of Codex
-     running inside the container knows it's you.
+   - We also automatically mounted your :file:`~/.codex` directory (which
+     contains :file:`auth.json`) into the container so that the isolated Codex
+     instance in the container could log in (also done by the launch script).
+     This is how the instance of Codex running inside the container knows it's
+     you.
    - We started Codex in the running container. Codex was
      started with the ``--sandbox danger-full-access`` argument, effectively
      disabling Codex's sandbox because we are using the container for isolation.
@@ -148,19 +149,22 @@ Next, we'll run Codex on a remote system (like NIH's Biowulf HPC).
       module load singularity  # make Singularity available
 
 4. Download the :file:`launch.py` script from this repo to the remote. If you want
-   a one-liner, this will put it in your home directory (:file:`~/launch.py`) but
-   you may want to put it somewhere on your PATH for convenience.
+   a one-liner, this will put it in your home directory (:file:`~/launch.py`)
+   and make it executable, but you may want to put it somewhere on your PATH
+   for convenience (see :ref:`getscripts`).
 
    .. code-block:: bash
 
-      curl -fSsL -o ~/launch.py https://github.com/nichd-bspc/llm/launch.py
+      curl -fSsL -o ~/launch.py https://raw.githubusercontent.com/nichd-bspc/llm/main/launch.py
+      chmod +x ~/launch.py
 
 5. Run the following, and test like you did above for the native version and
-   the local container version.
+   the local container version. (If you put :file:`launch.py` on your PATH,
+   you can just use :cmd:`launch.py codex`.)
 
    .. code-block:: bash
 
-      launch.py codex
+      ~/launch.py codex
 
 .. tip::
 
@@ -188,9 +192,6 @@ See :ref:`config-codex` for configuration.
 
 Step 5: Routine usage
 ---------------------
-Each time you start the container with :cmd:`launch.py` on a local Mac or
-a remote system, you will use the latest built image for the harness you are
-launching.
 
 Periodically, your credentials stored in :file:`~/.codex/auth.json` will
 expire. Use the :ref:`refresh` script to update them and push to a remote.

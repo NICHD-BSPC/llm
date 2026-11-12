@@ -13,7 +13,7 @@ See :doc:`getting-started-codex` for initial setup.
 
 - :file:`~/.codex`: Config, skills, persistent state directory. **Mounted into containers running Codex.**
 - :file:`~/.codex/config.toml`: Config file
-- :file:`./codex/auth.json`: Credentials
+- :file:`~/.codex/auth.json`: Credentials
 
 The Codex sandbox does not work well inside a container. Since we are using the
 container as a security boundary, :ref:`launch` automatically includes the
@@ -25,7 +25,8 @@ Here is an example :file:`~/.codex/config.toml` to use.
 
 .. code-block:: toml
 
-   model = "gpt-5.4"
+   # Model names change frequently; use /model in Codex to see what's available.
+   model = "gpt-6.1-sol"
    model_reasoning_effort = "medium"
    analytics.enabled = false
 
@@ -64,10 +65,13 @@ Most of the configuration we're using for Claude Code is in the environment
 variables, originally set up in :doc:`getting-started-claude`, and the
 :doc:`aws-sso` setup.
 
-:file:`~/.claude/settings.json` needs to at least exist and have an empty JSON
-array in it, and :ref:`launch` does this automatically by default. When you use the
-:cmd:`/model` command within Claude Code, it will enter that choice into this
-file for persistence, after which this file will look something like:
+:file:`~/.claude.json` needs to at least exist and contain an empty JSON
+object (``{}``); otherwise Claude Code can hang at startup. :ref:`launch`
+creates it (and :file:`~/.claude/`) automatically if missing.
+
+When you use the :cmd:`/model` command within Claude Code, it will save that
+choice in :file:`~/.claude/settings.json` for persistence, after which that
+file will look something like:
 
 .. code-block:: json
 
@@ -147,7 +151,7 @@ How Bedrock credentials reach the container
 The AWS SDK running *inside* a container cannot perform an SSO login, because that
 requires a browser and a localhost redirect. Such redirects to localhost do not
 work in a container, nor on a remote host. Remember, we're purposefully
-isolating things with containers..see :ref:`container-notes-login-model` for
+isolating things with containers; see :ref:`container-notes-login-model` for
 more.
 
 Since the container cannot refresh SSO credentials on its own, it needs to
@@ -197,6 +201,8 @@ credentials cannot shadow the profile's provider. Explicit static credentials
 supplied with ``--env`` are a separate supported mode and take precedence over
 profile auto-selection.
 
+.. _config-omp:
+
 Configure OMP
 -------------
 
@@ -235,6 +241,8 @@ See `OMP settings <https://github.com/can1357/oh-my-pi/blob/main/docs/settings.m
 `OMP providers <https://github.com/can1357/oh-my-pi/blob/main/docs/providers.md>`__,
 and `OMP model configuration <https://github.com/can1357/oh-my-pi/blob/main/docs/models.md>`__.
 
+.. _config-pi:
+
 Configure Pi
 ------------
 
@@ -243,4 +251,4 @@ See :doc:`getting-started-pi` for initial setup.
 - :file:`~/.pi`: Config, skill, persistent state directory. **Mounted into containers running Pi.**
 
 
-See `Pi settings <https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/settings.md>`__ for more.
+See `Pi settings <https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/settings.md>`__ for more.

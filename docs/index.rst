@@ -38,18 +38,22 @@ what it wants:
 
 .. code-block:: bash
 
+   # --ro:        agent can read, but not write, my/read-only/dir
+   # --mask:      agent only sees an empty directory for secret/dir
+   # --conda-env: agent can use the executables in path/to/conda/env
+   # --certs:     custom CA bundle, e.g. for running over VPN
    launch.py \
-     --ro my/read-only/dir \          # agent can read (but not write) to my/read-only/dir
-     --mask secret/dir \ .            # agent only sees an empty directory for secret/dir
-     --conda-env path/to/conda/env \  # agent can use the executables in path/to/conda/env
-     --certs ~/certs.pem \            # run over VPN
+     --ro my/read-only/dir \
+     --mask secret/dir \
+     --conda-env path/to/conda/env \
+     --certs ~/certs.pem \
      codex
 
 **Multiple agent harnesses** depending on your preferences:
 
 - `Codex CLI <https://developers.openai.com/codex/cli>`__, using models hosted by OpenAI enterprise using `ChatGPT Enterprise <https://openai.com/chatgpt/enterprise/>`__ authentication or `Amazon Bedrock <https://aws.amazon.com/bedrock/>`__ using `AWS SSO <https://aws.amazon.com/iam/identity-center/>`__.
 - `Claude Code CLI <https://code.claude.com/docs/en/overview>`__, using models hosted by Amazon Bedrock using AWS SSO.
-- `Pi coding agent <https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent>`__, also using models hosted by Amazon Bedrock using AWS SSO.
+- `Pi coding agent <https://github.com/earendil-works/pi/tree/main/packages/coding-agent>`__, also using models hosted by Amazon Bedrock using AWS SSO.
 - `OMP <https://github.com/can1357/oh-my-pi>`__, using models hosted by Amazon Bedrock through the same AWS SSO credentials.
 
 **Multiple container runtimes** for different systems:
@@ -63,8 +67,6 @@ what it wants:
 - :ref:`launch` to launch a container running the LLM tool
 - :ref:`agentsview` to launch a container that lets you explore your sessions across models, harnesses, and machines.
 - ``build.py`` to build container images (only required if you want to build your own; you can use our hosted images)
-
-**See** https://nichd-bspc.github.io/llm **for documentation.**
 
 **See** https://github.com/nichd-bspc/llm **for code.**
 

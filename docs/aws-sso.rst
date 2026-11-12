@@ -11,9 +11,12 @@ Setting up AWS SSO allows any tool using the AWS SDK to authenticate as well.
 That gives you lots of flexibility to use many parts of AWS, not just limited
 to LLM usage.
 
-The "managed profile", ``llm-export``, is a minimal profile with a read-only,
-temporary token provided to the running container. This avoids leaking full AWS
-credentials inside the container.
+The "managed profile", ``llm-export``, is a minimal profile that gives the
+running container only *short-lived* role credentials (typically valid for
+about an hour), mounted read-only. Your SSO login, the SSO token cache, and any
+other AWS profiles stay on the host. Note that these short-lived credentials
+still carry the full permissions of your role (e.g., PowerUser) until they
+expire -- they are not restricted to Bedrock.
 
 It is possible to use Azure or Google Cloud Platform instead of AWS, but that
 is not documented here yet.
@@ -22,12 +25,25 @@ How it works
 ------------
 
 Once you set up an SSO profile, :ref:`refresh` will use that to get temporary
-credentials from AWS. It will put export those credentials into a JSON file,
+credentials from AWS. It will export those credentials into a JSON file,
 which is mounted by :ref:`launch` into a running container. If you use
 ``refresh.py --remote <hostname>``, then this JSON will get pushed to the
 remote as well. Inside a running container, the AWS profile is set to the
 special ``llm-export`` profile. That special profile knows that it needs to
-read the JSON file with credentials. This happens on every model call.
+read the JSON file with credentials. The AWS SDK re-reads it whenever its
+cached credentials are near expiry (see :ref:`config-aws-export`).
+
+In other words:
+
+- refresh.py does this:
+  - runs AWS CLI to get temporary credentials
+  - stores them in a JSON file
+- launch.py does this:
+  - mounts that JSON into the container
+  - uses a profile inside the container that reads the JSON
+
+Run refresh.py on the host again, and container (or even remote container) will
+pick up the new JSON.
 
 The reason we do all of this is because:
 
@@ -41,8 +57,8 @@ The reason we do all of this is because:
 
 Your SSO profile is the *source* from which :cmd:`refresh.py` obtains
 credentials. This SSO profile is set up below in the account provisioning. Once
-that is set up, :cmd:`refresh.py` uses it to automatically create a  *managed
-profile*, here called ``llm-export`` This managed profile is only used by
+that is set up, :cmd:`refresh.py` uses it to automatically create a *managed
+profile*, here called ``llm-export``. This managed profile is only used by
 ``launch.py`` and ``refresh.py``.
 
 .. list-table:: Where should ``AWS_PROFILE`` be set?
@@ -109,7 +125,8 @@ This initial setup only needs to be done once per group.
     security group for CIT to create with these users
   - The role to assign users in the security group. We are currently using
     ``NIH-AWS-PowerUser``, one of the standard roles set up in an AWS STRIDES
-    account.
+    account. (In the AWS CLI and SSO portal, this shows up as the
+    ``AWSPowerUserAccess`` role.)
 
 - After answering any follow-up questions from CIT:
 
@@ -126,8 +143,8 @@ This initial setup only needs to be done once per group.
 2. AWS CLI v2 setup
 -------------------
 
-AWS CLI v2 is used to authenticate with AWS. Claude Code uses it to refresh
-credentials whenever possible, and it is also useful for working with API keys
+AWS CLI v2 is used to authenticate with AWS. :ref:`refresh` uses it to log in
+and export credentials, and it is also useful for working with API keys
 if you end up needing that; see :doc:`bedrock-keys` for more on this.
 
 - Install the `AWS Command Line Interface (AWS CLI) Version 2 <https://aws.amazon.com/cli/>`_
@@ -203,11 +220,17 @@ without explicitly specifying the profile:
 
    aws sts get-caller-identity
 
-To inspect your current credentials, including expiration time, run:
+To inspect when your current credentials expire, run:
 
 .. code-block:: bash
 
-   aws configure export-credentials
+   aws configure export-credentials | jq -r .Expiration
+
+.. caution::
+
+   Running :cmd:`aws configure export-credentials` without filtering prints the
+   secret access key and session token to the terminal. Avoid doing that where
+   it could be logged or seen.
 
 If you ever need to refresh credentials manually, run:
 

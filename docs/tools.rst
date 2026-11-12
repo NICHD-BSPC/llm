@@ -7,7 +7,7 @@ This repository provides four utility scripts:
 
 1. :file:`refresh.py` refreshes local credentials and can copy them to a remote host
 2. :file:`launch.py` starts agents inside a container
-3. :file:`agentsview.py` a browser view of agent sessions
+3. :file:`agentsview.py` provides a browser view of agent sessions
 4. :file:`build.py` builds the container image itself
 
 You'll usually only need :file:`refresh.py` and :file:`launch.py`.
@@ -55,7 +55,7 @@ variable):
 
 .. code-block:: bash
 
-   export PATH="$PATH:~/llm"
+   export PATH="$PATH:$HOME/llm"
 
 .. note::
 
@@ -80,7 +80,7 @@ Refreshes credentials locally, and optionally copies them to a remote host.
   :file:`~/.aws/llm-export`. The bundle is used via ``credential_process`` so
   containers can read refreshed credentials; see :ref:`config-aws-export` for
   why this indirection exists.
-- Converts the OpenAI auth tokens in :file:`~/.codex.auth.json` to
+- Converts the OpenAI auth tokens in :file:`~/.codex/auth.json` to
   a Pi-compatible format and stores in :file:`~/.pi/agent/auth.json` so that Pi
   can use ChatGPT Enterprise within a container. This needs the
   :ref:`auth-reload <pi-auth-reload>` extension installed.
@@ -147,7 +147,7 @@ support AWS SSO:
 
 .. code-block:: bash
 
-   eval "$(./refresh.py --bedrock-export)"
+   eval "$(refresh.py --bedrock-export)"
 
 ``--bedrock-export`` is a separate execution mode. It ignores ``--kind`` and
 ``--remote`` and does not enter the normal credential-refresh or transfer
@@ -292,7 +292,7 @@ Default config and credential mounts
 
 By default, :cmd:`launch.py` mounts the current working directory.
 
-Also by defaut, it mounts the following host paths in a tool-specific manner
+Also by default, it mounts the following host paths in a tool-specific manner
 into :file:`/home/devuser` inside the container when they exist:
 
 - :cmd:`launch.py codex`: :file:`~/.codex`
@@ -503,14 +503,14 @@ a workaround):
 
    launch.py --conda-env my-env codex
 
-Using ``--conda-env`` is a shortcut for the following:
+``--conda-env`` accepts either a path to an environment (anything containing
+a ``/``) or the name of an environment listed by :cmd:`conda env list`. The
+environment is mounted into the container at the same path as on the host
+(unless it is already inside the working directory), and its :file:`bin`
+directory is prepended to ``PATH`` inside the container.
 
-.. code-block:: bash
-
-   launch.py \
-     --mount $(conda info --base)/envs/my-env \
-     --prepend-path ~/conda/envs/my-env/bin \
-     codex
+(``--path-prepend`` is different: it takes a path *relative to the working
+directory* and does not add a mount.)
 
 .. _site-policy:
 
@@ -634,8 +634,9 @@ When developing locally or using other containers, specify the image name
    # or another published image
    launch.py --image-name quay.io/org/container codex
 
-   # or on Linux host, defaults to Singularity:
-   launch.py --sif-name llm.sif codex
+   # or on Linux host, defaults to Singularity. Relative --sif-path values
+   # are resolved relative to launch.py's directory, not the cwd.
+   launch.py --sif-path $PWD/llm.sif codex
 
 To stay on the published images but choose a different tag, use ``--tag``:
 
@@ -647,7 +648,16 @@ To stay on the published images but choose a different tag, use ``--tag``:
    # pin a specific harness version
    launch.py --tag codex-0.125.0 codex
 
+Other options:
 
+- ``--workspace-mount PATH``: mount the working directory at ``PATH`` inside
+  the container instead of the same path as on the host.
+- ``--arch``: Podman platform (default: the host architecture, e.g.
+  ``linux/arm64`` on Apple Silicon). Must match an architecture the image was
+  built for.
+- ``--verbose``: show more output, including credential mount status.
+
+See :cmd:`launch.py -h codex` for the full list.
 
 
 .. _launchenv:
@@ -771,8 +781,9 @@ followed, and pulled paths are checked before starting the container.
 Builds the local Podman image.
 
 - Builds a Podman image from this repo's :file:`Dockerfile`
-- Supports ``--no-cache``, ``--dry-run``, ``--image-name``, ``--arch``, and
-  ``--certs``
+- Supports ``--no-cache``, ``--dry-run``, ``--image-name``, ``--arch``,
+  ``--certs``, ``--repository-url``, and (all together)
+  ``--claude-version`` / ``--codex-version`` / ``--pi-version``
 
 .. code-block:: bash
 

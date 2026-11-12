@@ -24,7 +24,7 @@ Opus 5.5, GPT
   container without clobbering each other
 - Code review, making suggestions, and applying those suggestions (which were
   then manually reviewed/fixed/edited).
-- The `run-diagnostics` and `container-diagnostics` scripts (and the idea of
-  running with `script` to get around TTY requirements) used in testing
+- The ``run-diagnostics`` and ``container-diagnostics`` scripts (and the idea of
+  running with ``script`` to get around TTY requirements) used in testing
 - Drafting ``agentsview.py`` and documentation which were then manually
   reviewed and edited. *All* agentsview tests were completely written by AI.
