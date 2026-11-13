@@ -124,6 +124,13 @@ RUN --mount=type=secret,id=mitm_ca_bundle,required=false,target=/run/secrets/mit
   # Codex installation from official docs \
   npm i -g @openai/codex && \
   \
+  # This finds the codex npm package and puts it in a stable location that we \
+  # can use in launch.py to handle the codex daemon, making sure it's running \
+  # the same version as the version of Codex we just installed.
+  CODEX_PACKAGE="$(find /usr/local/lib/node_modules/@openai/codex -name codex-package.json -print -quit)" && \
+  test -n "${CODEX_PACKAGE}" && \
+  ln -s "$(dirname "${CODEX_PACKAGE}")" /opt/codex-daemon && \
+  \
   # Pi installation from official docs \
   npm install -g @earendil-works/pi-coding-agent && \
   \

@@ -28,3 +28,5 @@ Opus 5.5, GPT
   running with ``script`` to get around TTY requirements) used in testing
 - Drafting ``agentsview.py`` and documentation which were then manually
   reviewed and edited. *All* agentsview tests were completely written by AI.
+- Isolating the Codex daemon per container (pointing it at the image's CLI
+  build), with its documentation and regression tests.

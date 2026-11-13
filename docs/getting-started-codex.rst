@@ -110,6 +110,19 @@ above, do the following:
      disabling Codex's sandbox because we are using the container for isolation.
    - Exiting Codex automatically exited the container.
 
+.. details:: Codex daemon
+
+   Codex runs agent sessions in a background ``codex app-server`` daemon. For
+   ``launch.py codex`` and ``launch.py shell``, each container gets its own
+   daemon, which runs the image's own Codex build. The launcher does this by
+   overlaying the daemon's directories in :file:`~/.codex` (which daemon build
+   to run, process IDs, and control sockets) with temporary per-container
+   directories. This avoids Codex trying to use the host's version of the
+   daemon or trying to re-install it on every single launch, but still allows
+   the daemon to be available within the container, including for ``codex
+   agents``. Separate containers have separate daemons. The temporary
+   directories are removed when the launcher exits.
+
 .. warning::
 
    If you are on VPN, or otherwise on a network that is intercepting your

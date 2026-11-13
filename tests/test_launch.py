@@ -258,10 +258,11 @@ class LaunchAwsEnvTests(unittest.TestCase):
                 self.patch_aws_paths(tmpdir),
                 mock.patch.dict(launch.os.environ, {}, clear=True),
             ):
-                with self.assertRaises(SystemExit):
+                with self.assertRaises(SystemExit), mock.patch.object(launch.LOGGER, "error") as error:
                     self.make_launcher(
                         "--env", "PI_USE_BEDROCK=1", "pi"
                     ).build_runtime_environment()[0]
+                self.assertIn("AWS_PROFILE must be set", error.call_args.args[0])
 
     def test_explicit_managed_profile_uses_bundle_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -474,10 +475,11 @@ class LaunchAwsEnvTests(unittest.TestCase):
                     clear=True,
                 ),
             ):
-                with self.assertRaises(SystemExit):
+                with self.assertRaises(SystemExit), mock.patch.object(launch.LOGGER, "error") as error:
                     self.make_launcher(
                         "--env", "PI_USE_BEDROCK=1", "pi"
                     ).build_runtime_environment()[0]
+                self.assertIn("managed credential Expiration is not a valid timestamp", error.call_args.args[0])
 
     def test_invalid_managed_files_do_not_block_other_explicit_modes(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -557,8 +559,9 @@ class AwsCredentialModeMatrixTests(unittest.TestCase):
                     ):
                         launcher = self.make_launcher(*argv)
                         if expected == "failure":
-                            with self.assertRaises(SystemExit):
+                            with self.assertRaises(SystemExit), mock.patch.object(launch.LOGGER, "error") as error:
                                 launcher.build_runtime_environment()[0]
+                            self.assertTrue(error.called)
                             continue
 
                         env, aws_mounts = launcher.build_runtime_environment()
@@ -607,6 +610,68 @@ class AwsCredentialModeMatrixTests(unittest.TestCase):
         self.assertFalse(
             any(target.startswith(launch.CONTAINER_AWS_DIR) for _, target, _ in mounts)
         )
+
+
+class CodexDaemonIsolationTests(unittest.TestCase):
+    def test_only_codex_credentialed_commands_get_daemon_overlays(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(launch.Path, "home", return_value=Path(tmpdir)):
+                for command in ("codex", "shell", "claude", "pi", "omp"):
+                    with self.subTest(command=command):
+                        launcher = launch.Launcher(launch.parse_args([command]))
+                        targets = {
+                            target for _, target, _ in
+                            launcher.build_mounts(launch.SUBCOMMAND_CONFIG[command])
+                        }
+                        has_overlay = (
+                            "/home/devuser/.codex/packages/app-server-daemon" in targets
+                        )
+                        self.assertEqual(has_overlay, command in {"codex", "shell"})
+
+    def test_launches_keep_host_daemon_and_other_containers_separate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            host_home = Path(tmpdir)
+            package = host_home / ".codex/packages/app-server-daemon"
+            package.mkdir(parents=True)
+            marker = package / "host-version"
+            marker.write_text("older host installation")
+
+            with (
+                mock.patch.object(launch.Path, "home", return_value=host_home),
+                mock.patch.dict(launch.os.environ, {"HOME": str(host_home)}),
+            ):
+                for backend in ("podman", "singularity"):
+                    previous_sources = set()
+                    for command in ("codex", "shell"):
+                        launcher = launch.Launcher(
+                            launch.parse_args(["--backend", backend, command])
+                        )
+                        with mock.patch.object(launch.LOGGER, "warning") as warning:
+                            mounts = launcher.build_mounts(launch.SUBCOMMAND_CONFIG[command])
+                        warning.assert_not_called()
+                        mounted = {target: (Path(source), readonly) for source, target, readonly in mounts}
+                        self.assertEqual(
+                            mounted["/home/devuser/.codex"], (host_home / ".codex", False)
+                        )
+                        for relative_path in (
+                            "packages/app-server-daemon", "app-server-daemon", "app-server-control"
+                        ):
+                            source, readonly = mounted[f"/home/devuser/.codex/{relative_path}"]
+                            self.assertFalse(readonly)
+                            if relative_path == "packages/app-server-daemon":
+                                current = source / "current"
+                                self.assertEqual(list(source.iterdir()), [current])
+                                self.assertEqual(
+                                    os.readlink(current), launch.CODEX_DAEMON_PACKAGE
+                                )
+                            else:
+                                self.assertEqual(list(source.iterdir()), [])
+                            self.assertFalse(source.is_relative_to(host_home / ".codex"))
+                            self.assertNotIn(source, previous_sources)
+                            previous_sources.add(source)
+                            (source / "container-state").write_text("private")
+            self.assertEqual(marker.read_text(), "older host installation")
+            self.assertEqual(list(package.iterdir()), [marker])
 
 
 class SensitiveEnvironmentTests(unittest.TestCase):
@@ -848,8 +913,10 @@ class SensitiveEnvironmentTests(unittest.TestCase):
             shutil.rmtree(temp_dir)
 
         for value in ('a"quote', "a'quote", "line\nbreak"):
-            with self.subTest(value=repr(value)), self.assertRaises(SystemExit):
+            with self.subTest(value=repr(value)), self.assertRaises(SystemExit), \
+                    mock.patch.object(launch.LOGGER, "error") as error:
                 launcher._write_sensitive_env_file({"AWS_SESSION_TOKEN": value})
+            self.assertIn("unsupported newline", error.call_args.args[0])
 
 
 class ImageTagResolutionTests(unittest.TestCase):
@@ -919,7 +986,8 @@ class MaskTests(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as tmpdir, \
                         tempfile.TemporaryDirectory() as fake_home:
                     (Path(tmpdir) / "secret").mkdir()
-                    with mock.patch.object(launch.os, "getcwd", return_value=tmpdir), \
+                    resolved = str(Path(tmpdir).resolve())
+                    with mock.patch.object(launch.os, "getcwd", return_value=resolved), \
                             mock.patch.object(
                                 launch.Path, "home", return_value=Path(fake_home)
                             ):
@@ -934,7 +1002,7 @@ class MaskTests(unittest.TestCase):
 
                         self.assertEqual(mask_args[0], flag)
                         src, target, mode = mask_args[1].split(":")
-                        self.assertEqual(target, f"{tmpdir}/secret")
+                        self.assertEqual(target, f"{resolved}/secret")
                         self.assertEqual(mode, "ro")
                         # Empty shadow dir must live under $HOME so it is shared
                         # into the podman machine VM on macOS.
@@ -945,14 +1013,16 @@ class MaskTests(unittest.TestCase):
     def test_mask_missing_path_is_fatal(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.object(launch.os, "getcwd", return_value=tmpdir):
-                with self.assertRaises(SystemExit):
+                with self.assertRaises(SystemExit), mock.patch.object(launch.LOGGER, "error") as error:
                     launch.Launcher(launch.parse_args(["--mask", "nope", "shell"]))
+                self.assertIn("--mask path", error.call_args.args[0])
 
     def test_mask_outside_workspace_is_fatal(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.object(launch.os, "getcwd", return_value=tmpdir):
-                with self.assertRaises(SystemExit):
+                with self.assertRaises(SystemExit), mock.patch.object(launch.LOGGER, "error") as error:
                     launch.Launcher(launch.parse_args(["--mask", "/etc", "shell"]))
+                self.assertIn("must be inside", error.call_args.args[0])
 
     def test_no_mask_leaves_targets_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -988,21 +1058,24 @@ class MaskTests(unittest.TestCase):
     def test_ro_missing_path_is_fatal(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.object(launch.os, "getcwd", return_value=tmpdir):
-                with self.assertRaises(SystemExit):
+                with self.assertRaises(SystemExit), mock.patch.object(launch.LOGGER, "error") as error:
                     launch.Launcher(launch.parse_args(["--ro", "nope", "shell"]))
+                self.assertIn("--ro path", error.call_args.args[0])
 
     def test_ro_outside_workspace_is_fatal(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.object(launch.os, "getcwd", return_value=tmpdir):
-                with self.assertRaises(SystemExit):
+                with self.assertRaises(SystemExit), mock.patch.object(launch.LOGGER, "error") as error:
                     launch.Launcher(launch.parse_args(["--ro", "/etc", "shell"]))
+                self.assertIn("must be inside", error.call_args.args[0])
 
     def test_ro_whole_workspace_is_fatal(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             resolved = str(Path(tmpdir).resolve())
             with mock.patch.object(launch.os, "getcwd", return_value=resolved):
-                with self.assertRaises(SystemExit):
+                with self.assertRaises(SystemExit), mock.patch.object(launch.LOGGER, "error") as error:
                     launch.Launcher(launch.parse_args(["--ro", ".", "shell"]))
+                self.assertIn("cannot cover the entire working directory", error.call_args.args[0])
 
     def test_ro_subdir_does_not_warn_nested(self):
         with tempfile.TemporaryDirectory() as tmpdir:

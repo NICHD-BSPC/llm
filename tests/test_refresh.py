@@ -271,8 +271,9 @@ class RefreshProfileSelectionTests(unittest.TestCase):
     def test_bedrock_export_is_not_a_kind(self):
         args = refresh.parse_args(["--bedrock-export", "--kind", "pi"])
         self.assertTrue(args.bedrock_export)
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
             refresh.parse_args(["--kind", "bedrock"])
+        self.assertIn("invalid choice: 'bedrock'", stderr.getvalue())
 
     def test_show_files_exits_successfully(self):
         args = mock.Mock(show_files=True)

@@ -464,6 +464,16 @@ Claude Code-specific issues
 Codex-specific issues
 ---------------------
 
+- **MCP warning about ``node_repl`` or missing ``BROWSER_USE_ACCESS_*`` variables:**
+
+  The host's :file:`~/.codex/config.toml` is shared with the container. It may
+  configure ``node_repl`` using the macOS ChatGPT app's executable under
+  :file:`/Applications/ChatGPT.app`, which is unavailable inside Linux.
+  This warning concerns the desktop browser/computer-use integration and does
+  not by itself indicate a daemon or model connection failure. Inspect the
+  ``[mcp_servers.node_repl]`` entry and run :cmd:`codex doctor` for details.
+  Editing this shared config also affects Codex on the host.
+
 - **WebSockets to HTTPS warning:** In Codex, you may see the following message:
 
   ``Falling back from WebSockets to HTTPS transport. stream disconnected before completion: invalid peer certificate: UnknownIssuer``

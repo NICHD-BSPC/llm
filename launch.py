@@ -117,6 +117,18 @@ SUBCOMMAND_CONFIG = {
     },
 }
 
+# These will be overlaid into the container's ~/.codex with versions we create
+# ahead of time, to handle the codex daemon in the container. More information
+# in Launcher._codex_daemon_mounts().
+CODEX_DAEMON_DIRS = (
+    "packages/app-server-daemon",
+    "app-server-daemon",
+    "app-server-control",
+)
+# In-image link to the Codex CLI's native package. It's created in the
+# Dockerfile.
+CODEX_DAEMON_PACKAGE = "/opt/codex-daemon"
+
 # If certs provided, mount them here inside the container.
 CONTAINER_CERTS_PATH = "/tmp/llm-devcontainer-cert.pem"
 
@@ -1117,6 +1129,8 @@ class Launcher:
 
         for tool in subcommand_config["credentials"]:
             mounts.extend(self._credential_mounts(tool))
+            if tool == "codex":
+                mounts.extend(self._codex_daemon_mounts())
 
             if not self.args.no_site_policy:
                 policy_path = POLICY_PATHS.get(tool)
@@ -1128,6 +1142,44 @@ class Launcher:
         normalized_mounts = self._normalize_mounts(mounts)
         self._warn_nested_mounts(normalized_mounts)
         return normalized_mounts
+
+    def _codex_daemon_mounts(self):
+        """Give this container its own Codex daemon, using the image's build.
+
+        Some background...`codex` is a client of a background `codex
+        app-server` daemon. It's mostly a mechanism to manage agents. When
+        running natively, it uses binaries in the home directory. For the
+        purposes of these containers, we would like that server to be in
+        a container-specific location so that it matches versions with the
+        running version of Codex.
+
+        Codex's daemon manager expects three things: the daemon package
+        directory, runtime PIDs/locks, and control sockets. These don't make
+        sense to be the host's copies (PIDs are different, OS could be
+        different, etc). So we overlay all three with fresh directories each
+        launch. The rest of the host's ~/.codex stays as-is.
+
+        The trick here is to create `current` as a symlink to something that we
+        know will exist in the container (because we created it in the
+        Dockerfile), put that symlink in a temp dir, and mount that as an
+        overlay in the container's ~/.codex. The end result is that Codex looks
+        in the home directory inside the container and sees the right thing.
+
+        Without this, Codex would either complain that it can't use agents, or
+        would install and auto-update its own copy of the daemon on every
+        launch.
+        """
+        daemon_dir = Path(tempfile.mkdtemp(prefix=".llm-codex-", dir=Path.home()))
+        atexit.register(shutil.rmtree, daemon_dir, ignore_errors=True)
+        mounts = []
+        for relative_path in CODEX_DAEMON_DIRS:
+            source = daemon_dir / relative_path
+            source.mkdir(parents=True)
+            target = f"/home/devuser/.codex/{relative_path}"
+            mounts.append((str(source), target, False))
+            self.args.nested_ok_targets.add(target)
+        (daemon_dir / CODEX_DAEMON_DIRS[0] / "current").symlink_to(CODEX_DAEMON_PACKAGE)
+        return mounts
 
     def _normalize_mounts(self, mounts):
         """Deduplicate identical mounts and reject conflicting container paths."""
@@ -1154,9 +1206,10 @@ class Launcher:
         """Warn when one container mount target nests inside another.
 
         Mounts whose container target is an intentionally-nested target, from
-        --ro or --mask, are ignored since nesting is their whole purpose.
+        --ro, --mask, or the Codex daemon overlays, are ignored since nesting is
+        their whole purpose.
         """
-        # --mask and --ro paths should have been added to nested_ok_targets.
+        # Intentionally nested paths are recorded when their mounts are built.
         nested_ok = self.args.nested_ok_targets
         for index, (host_path, container_path, _) in enumerate(mounts):
             for other_host_path, other_container_path, _ in mounts[index + 1 :]:
