@@ -1129,6 +1129,8 @@ class Launcher:
 
         for tool in subcommand_config["credentials"]:
             mounts.extend(self._credential_mounts(tool))
+            if tool == "codex":
+                mounts.extend(self._codex_daemon_mounts())
 
             if not self.args.no_site_policy:
                 policy_path = POLICY_PATHS.get(tool)

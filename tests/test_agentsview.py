@@ -16,7 +16,9 @@ import agentsview
 class AgentsviewTests(unittest.TestCase):
     def test_no_paths_does_not_start_podman(self):
         with tempfile.TemporaryDirectory() as home, mock.patch.object(agentsview.Path, "home", return_value=Path(home)), mock.patch.object(agentsview.shutil, "which", return_value="/bin/podman"), mock.patch.object(agentsview.subprocess, "run") as run:
-            self.assertEqual(agentsview.main([]), 1)
+            with self.assertLogs("agentsview", level="ERROR") as logs:
+                self.assertEqual(agentsview.main([]), 1)
+            self.assertIn("no agent session paths found", logs.output[0])
             run.assert_not_called()
 
     def test_partial_mounts_and_port(self):
@@ -56,7 +58,9 @@ class AgentsviewTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "no agent session paths"):
                 agentsview.require_sessions(agentsview.existing_sources(root))
             with mock.patch.object(agentsview.shutil, "which", return_value="/bin/ssh"), mock.patch.object(agentsview.subprocess, "run", return_value=mock.Mock(stdout=".codex/history.jsonl\n")) as run:
-                self.assertEqual(agentsview.main(["--remote-only", "host"]), 1)
+                with self.assertLogs("agentsview", level="ERROR") as logs:
+                    self.assertEqual(agentsview.main(["--remote-only", "host"]), 1)
+                self.assertIn("no agent session paths found", logs.output[0])
                 self.assertEqual(run.call_count, 1)
 
     def test_local_defaults_and_detach(self):
@@ -78,7 +82,10 @@ class AgentsviewTests(unittest.TestCase):
                     with self.subTest(result=result):
                         process.wait.side_effect = result if isinstance(result, BaseException) else None
                         process.wait.return_value = result
-                        self.assertEqual(agentsview.main([]), expected)
+                        with self.assertLogs("agentsview", level="INFO") as logs:
+                            self.assertEqual(agentsview.main([]), expected)
+                        if isinstance(result, subprocess.CalledProcessError):
+                            self.assertTrue(any("ERROR:agentsview:Command" in line for line in logs.output))
                 self.assertEqual(run.call_count, 3)  # config writes
                 cmd = popen.call_args.args[0]
                 self.assertEqual(cmd[cmd.index("--name") + 1], "agentsview")
@@ -119,9 +126,11 @@ class AgentsviewTests(unittest.TestCase):
 
     def test_remote_cleanup_after_podman_failure_or_interrupt(self):
         for effect, expected in ((subprocess.CalledProcessError(1, ["podman"]), 1), (KeyboardInterrupt(), 130)):
-            with self.subTest(effect=effect):
+            with self.subTest(effect=effect), self.assertLogs("agentsview", level="INFO") as logs:
                 result, _, _ = self.remote_run(effect)
                 self.assertEqual(result, expected)
+            if isinstance(effect, subprocess.CalledProcessError):
+                self.assertTrue(any("ERROR:agentsview:Command" in line for line in logs.output))
 
     def test_verbose_logs_each_command(self):
         with tempfile.TemporaryDirectory() as home:
@@ -147,7 +156,9 @@ class AgentsviewTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, cmd)
             return mock.Mock()
         with mock.patch.object(agentsview.tempfile, "mkdtemp", return_value=tmp), mock.patch.object(agentsview.shutil, "which", return_value="/bin/tool"), mock.patch.object(agentsview.subprocess, "run", side_effect=respond):
-            self.assertEqual(agentsview.main(["--remote-only", "host"]), 1)
+            with self.assertLogs("agentsview", level="INFO") as logs:
+                self.assertEqual(agentsview.main(["--remote-only", "host"]), 1)
+        self.assertTrue(any("ERROR:agentsview:Command '['rsync'" in line for line in logs.output))
         self.assertFalse(Path(tmp).exists())
 
     def test_remote_logs_sources_once(self):
@@ -187,7 +198,9 @@ class AgentsviewTests(unittest.TestCase):
                 (Path(cmd[-1]) / ".pi/agent/sessions").symlink_to(local)
             return mock.Mock()
         with mock.patch.object(agentsview.tempfile, "mkdtemp", return_value=tmp), mock.patch.object(agentsview.shutil, "which", return_value="/bin/tool"), mock.patch.object(agentsview.subprocess, "run", side_effect=respond), mock.patch.object(agentsview.subprocess, "Popen") as popen:
-            self.assertEqual(agentsview.main(["--remote-only", "host"]), 1)
+            with self.assertLogs("agentsview", level="INFO") as logs:
+                self.assertEqual(agentsview.main(["--remote-only", "host"]), 1)
+            self.assertTrue(any("links outside" in line for line in logs.output))
             popen.assert_not_called()
         self.assertFalse(Path(tmp).exists())
         self.assertTrue(Path(local).exists())
@@ -199,8 +212,9 @@ class AgentsviewTests(unittest.TestCase):
         self.assertEqual(agentsview.parse_args(["--remote", "my-host.example_1.org"]).remote, ["my-host.example_1.org"])
 
     def test_remote_detach_rejected(self):
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
             agentsview.parse_args(["--remote", "host", "-d"])
+        self.assertIn("--detach cannot be used with --remote", stderr.getvalue())
 
 
 class CombinedTests(unittest.TestCase):
@@ -281,14 +295,17 @@ class CombinedTests(unittest.TestCase):
     def test_combined_flow(self):
         paths = {"box": ".claude/projects\n.codex/history.jsonl\n", "hpc": ".pi/agent/sessions\n"}
         for effect, expected in ((None, 0), (subprocess.CalledProcessError(1, ["podman"]), 1), (KeyboardInterrupt(), 130)):
-            with self.subTest(effect=effect):
+            with self.subTest(effect=effect), self.assertLogs("agentsview", level="INFO") as logs:
                 result, events, cmd, tmp = self.combined_run(paths, effect)
                 self.assertEqual(result, expected)
                 self.assertEqual([c[0][0] for c in events], ["ssh", "ssh", "podman", "rsync", "rsync"])
-                self.assertEqual([c[0][-1] for c in events if c[0][0] == "rsync"], [tmp + "/box/", tmp + "/hpc/"])
+                resolved_tmp = str(Path(tmp).resolve())
+                self.assertEqual([c[0][-1] for c in events if c[0][0] == "rsync"], [resolved_tmp + "/box/", resolved_tmp + "/hpc/"])
                 self.assertIn("/remote/box/claude:ro", " ".join(cmd))
                 self.assertNotIn("history.jsonl", " ".join(cmd) + str(events[3:]))
                 self.assertIn('machine = "box"', events[2][1]["input"])
+                if isinstance(effect, subprocess.CalledProcessError):
+                    self.assertTrue(any("ERROR:agentsview:Command" in line for line in logs.output))
 
     def test_empty_host(self):
         paths = {"box": "", "hpc": ".pi/agent/sessions\n"}
@@ -297,7 +314,9 @@ class CombinedTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("box: no session paths found", str(logs.output))
         self.assertEqual(len([c for c, _ in events if c[0] == "rsync"]), 1)
-        result, events, cmd, _ = self.combined_run({"box": "", "hpc": ""})
+        with self.assertLogs("agentsview", level="INFO") as logs:
+            result, events, cmd, _ = self.combined_run({"box": "", "hpc": ""})
+        self.assertTrue(any("no agent session paths found" in line for line in logs.output))
         self.assertEqual(result, 1)
         self.assertEqual([c[0][0] for c in events], ["ssh", "ssh"])
         self.assertIsNone(cmd)
