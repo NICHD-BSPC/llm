@@ -564,8 +564,12 @@ in the environment:
      --env HOME=/tmp \
      codex
 
-AWS access keys, secret keys, session/security tokens, and Bedrock bearer tokens
-are passed to both supported container runtimes through a temporary environment
+AWS access keys, secret keys, session/security tokens, Bedrock bearer tokens,
+the Codex OAuth token, any other variable whose name contains a ``KEY``,
+``TOKEN``, ``SECRET``, or ``PASSWORD`` segment (for example
+``ANTHROPIC_API_KEY`` or ``CLAUDE_CODE_OAUTH_TOKEN``), and proxy URLs that
+contain credentials (``user:pass@``) are passed to both supported container
+runtimes through a temporary environment
 file rather than as command arguments. The file and its private temporary
 directory are removed after the container exits or if launch fails. Sensitive
 values are not shown by ``--dry-run``; only the temporary file path appears.

@@ -1,6 +1,17 @@
 Changelog
 =========
 
+2026-11-18
+----------
+
+- Singularity containers now run with ``--pid`` and ``--ipc`` to isolate the
+  process namespace in the container.
+
+- Environment variables whose names contain a ``KEY``, ``TOKEN``, ``SECRET``,
+  or ``PASSWORD`` segment (e.g. ``ANTHROPIC_API_KEY``,
+  ``CLAUDE_CODE_OAUTH_TOKEN``), and proxy URLs with embedded credentials, are
+  now passed via the private environment file.
+
 2026-11-12
 ----------
 
