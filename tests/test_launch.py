@@ -703,6 +703,15 @@ class SensitiveEnvironmentTests(unittest.TestCase):
             "AWS_SESSION_TOKEN": "session=token",
             "AWS_SECURITY_TOKEN": "security-token",
             "AWS_BEARER_TOKEN_BEDROCK": "bearer-token",
+            "ANTHROPIC_API_KEY": "anthropic-key",
+            "CLAUDE_CODE_OAUTH_TOKEN": "claude-oauth",
+            "https_proxy": "http://user:proxy-pass@proxy:8080",
+        }
+        # Name contains "TOKENS", not a "TOKEN" segment; proxy has no creds.
+        ordinary = {
+            "ORDINARY": "visible",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "4096",
+            "http_proxy": "http://proxy:8080",
         }
         for backend in ("podman", "singularity"):
             with self.subTest(backend=backend):
@@ -717,7 +726,7 @@ class SensitiveEnvironmentTests(unittest.TestCase):
                     inspected["contents"] = env_path.read_text()
                     return mock.Mock(returncode=0)
 
-                env = {"HOME": "/home/devuser", "ORDINARY": "visible", **secrets}
+                env = {"HOME": "/home/devuser", **ordinary, **secrets}
                 self.run_launcher(
                     self.make_launcher(backend), env, inspect_command
                 )
@@ -725,7 +734,8 @@ class SensitiveEnvironmentTests(unittest.TestCase):
                 command_text = "\0".join(inspected["cmd"])
                 for value in secrets.values():
                     self.assertNotIn(value, command_text)
-                self.assertIn("ORDINARY=visible", inspected["cmd"])
+                for key, value in ordinary.items():
+                    self.assertIn(f"{key}={value}", inspected["cmd"])
                 self.assertEqual(inspected["mode"], 0o600)
                 self.assertEqual(inspected["dir_mode"], 0o700)
                 self.assertIn("AWS_SESSION_TOKEN=session=token\n", inspected["contents"])

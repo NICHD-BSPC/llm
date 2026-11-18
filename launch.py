@@ -59,7 +59,7 @@ AWS_STATIC_CREDENTIAL_ENV_VARS = {
     "AWS_CREDENTIAL_EXPIRATION",
 }
 
-# Keep these out of printed output
+# Explicitly keep these out of printed output
 SENSITIVE_ENV_VARS = {
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
@@ -67,7 +67,27 @@ SENSITIVE_ENV_VARS = {
     "AWS_SECURITY_TOKEN",
     "AWS_BEARER_TOKEN_BEDROCK",
     "OPENAI_CODEX_OAUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
 }
+
+# ...but to be safe, any env var with one of these underscore-separated name
+# segments (OPENROUTER_API_KEY, ANTHROPIC_AUTH_TOKEN) is also treated as sensitive.
+SENSITIVE_NAME_SEGMENTS = {"KEY", "APIKEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD"}
+
+PROXY_ENV_VARS = {"http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY"}
+
+
+def is_sensitive_env(key, value):
+    """
+    Return True if an env var should go through the private env file.
+    """
+    if key in SENSITIVE_ENV_VARS:
+        return True
+    if SENSITIVE_NAME_SEGMENTS.intersection(key.upper().split("_")):
+        return True
+    # It's possible for proxy URLs to embed credentials (like http://user:pass@host).
+    return key in PROXY_ENV_VARS and "@" in value
 
 # Hard-coded credential and config paths.
 CREDENTIAL_PATHS = {
@@ -1371,12 +1391,14 @@ class Launcher:
         # The following handles secret values in a way that avoids printing
         # them in dry-runs or during process inspection.
         sensitive_env = {
-            key: value for key, value in env_vars.items() if key in SENSITIVE_ENV_VARS
+            key: value
+            for key, value in env_vars.items()
+            if is_sensitive_env(key, value)
         }
         ordinary_env = {
             key: value
             for key, value in env_vars.items()
-            if key not in SENSITIVE_ENV_VARS
+            if key not in sensitive_env
         }
         sensitive_env_file = None
         sensitive_env_dir = None
