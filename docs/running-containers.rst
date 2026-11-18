@@ -375,6 +375,9 @@ other implicit mounts. Specifically:
 - ``--cleanenv`` stops the host environment from being copied into the
   container.
 
+- ``--pid`` and ``--ipc`` give the container its own process and IPC
+  namespaces.
+
 - ``SINGULARITY_BIND``, ``SINGULARITY_BINDPATH``, ``SINGULARITY_MOUNT`` and
   their ``APPTAINER_`` equivalents are removed from the environment that
   :cmd:`singularity` itself runs with, so they can't add mounts. A warning

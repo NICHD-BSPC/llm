@@ -454,6 +454,8 @@ class SingularityBackend(Backend):
         #
         # --cleanenv prevents inheriting ALL of the env
         #
+        # --pid and --ipc give the container its own PID and IPC namespaces.
+        #
         # --no-eval preserves environment-file values literally
         #
         no_mount = ["hostfs", "cwd"]
@@ -470,6 +472,8 @@ class SingularityBackend(Backend):
             "--contain",
             "--no-mount", ",".join(no_mount),
             "--cleanenv",
+            "--pid",
+            "--ipc",
             "--no-eval",
             "--pwd", args.workspace_mount or os.getcwd(),
             args.sif_path,

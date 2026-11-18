@@ -1,6 +1,12 @@
 Changelog
 =========
 
+2026-11-18
+----------
+
+- Singularity containers now run with ``--pid`` and ``--ipc`` to isolate the
+  process namespace in the container.
+
 2026-11-12
 ----------
 

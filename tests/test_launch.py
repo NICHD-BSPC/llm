@@ -802,6 +802,12 @@ class SensitiveEnvironmentTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--no-mount") + 1], "hostfs,cwd,bind-paths")
         self.assertNotIn("SINGULARITY_BINDPATH", run.call_args.kwargs["env"])
 
+    def test_singularity_isolates_pid_and_ipc_namespaces(self):
+        run = self.run_with_host_env(self.make_launcher("singularity"), {})
+        cmd = run.call_args.args[0]
+        self.assertIn("--pid", cmd)
+        self.assertIn("--ipc", cmd)
+
     def test_podman_inherits_environment_unchanged(self):
         launcher = self.make_launcher("podman")
         with self.assertNoLogs("launch", "WARNING"):
